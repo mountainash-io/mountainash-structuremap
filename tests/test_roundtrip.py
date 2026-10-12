@@ -116,3 +116,16 @@ def test_detected_xml_metadata_requires_its_native_binding():
     with pytest.raises(StructureMapError) as caught:
         derive(XmlRecord)
     assert caught.value.code == "unavailable_binding"
+
+
+def test_postponed_annotations_resolve_nested_records_and_class_local_aliases():
+    from mountainash_structuremap import decompose, derive, prepare, reconstruct
+    from tests.fixtures.postponed_models import NestedDocument
+
+    prepared = prepare(derive(NestedDocument))
+    tables = {"root": [{"_sm_key": "external", "home_city": "Oslo", "count": 3}]}
+    rebuilt = reconstruct(tables, prepared)
+
+    assert rebuilt == NestedDocument(NestedDocument.Address("Oslo"), 3)
+    row = decompose(rebuilt, prepared)["root"][0]
+    assert (row["home_city"], row["count"]) == ("Oslo", 3)

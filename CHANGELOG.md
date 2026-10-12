@@ -7,3 +7,4 @@
 - Attach collection descendants to their actual enclosing row, including optional inline records whose presence is established by descendants.
 - Accept independently supplied occurrence keys and gapped strict positions; sort reconstruction metadata through Mountainash without inferring business-cell types.
 - Add contextual native/configuration/data errors, explicit unsupported-capability refusals, typed package exports and an executable round-trip example.
+- Resolve postponed annotations against the dataclass namespace, retaining nested record classes and class-local scalar aliases.

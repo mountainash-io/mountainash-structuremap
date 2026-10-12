@@ -49,7 +49,7 @@ def derive(root_type: type[T], *, binding: str | None = None) -> DerivedModel[T]
             hints = get_type_hints(
                 cls,
                 globalns=vars(module) if module else {},
-                localns={cls.__name__: cls},
+                localns={**vars(cls), cls.__name__: cls},
             )
         except Exception as exc:
             raise StructureMapError(

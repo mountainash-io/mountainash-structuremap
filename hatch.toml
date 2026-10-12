@@ -1,0 +1,35 @@
+[envs.test]
+python = "3.12"
+installer = "uv"
+skip-install = false
+dependencies = [
+  "pytest>=8",
+  "pydantic>=2.2,<3",
+  "mountainash @ {env:MOUNTAINASH_SOURCE_URI:{root:uri}/../mountainash}",
+]
+
+[envs.test.scripts]
+test-target-quick = "pytest {args}"
+test = "pytest tests"
+
+[envs.ruff]
+python = "3.12"
+installer = "uv"
+skip-install = true
+dependencies = ["ruff"]
+
+[envs.ruff.scripts]
+check = "ruff check src tests examples"
+
+[envs.mypy]
+python = "3.12"
+installer = "uv"
+skip-install = true
+dependencies = [
+  "mypy",
+  "pydantic>=2.2,<3",
+  "mountainash @ {env:MOUNTAINASH_SOURCE_URI:{root:uri}/../mountainash}",
+]
+
+[envs.mypy.scripts]
+check = "mypy src/mountainash_structuremap"

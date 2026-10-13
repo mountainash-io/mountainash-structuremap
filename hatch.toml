@@ -4,7 +4,7 @@ installer = "uv"
 skip-install = false
 dependencies = [
   "pytest>=8",
-  "pydantic>=2.2,<3",
+  "pydantic>=2.5,<3",
   "mountainash @ {env:MOUNTAINASH_SOURCE_URI:{root:uri}/../mountainash}",
 ]
 
@@ -27,7 +27,7 @@ installer = "uv"
 skip-install = true
 dependencies = [
   "mypy",
-  "pydantic>=2.2,<3",
+  "pydantic>=2.5,<3",
   "mountainash @ {env:MOUNTAINASH_SOURCE_URI:{root:uri}/../mountainash}",
 ]
 

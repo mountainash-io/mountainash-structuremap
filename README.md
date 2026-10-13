@@ -68,12 +68,52 @@ Nullable structured collection members carry `_sm_null`: a true marker means
 null, while false preserves present empty/all-null members. Contradictory null
 rows with populated payload or descendants are rejected.
 
+### Mapping configuration
+
+The same derived model can be prepared with independent configurations:
+
+```python
+from mountainash_structuremap import MappingSpec, Naming, UseOverride
+
+mapping = MappingSpec(
+    defaults={"naming": Naming(metadata_namespace="recon_")},
+    overrides={
+        "people": UseOverride(table="persons"),
+        "people/name": UseOverride(column="display_name"),
+    },
+)
+configured = prepare(derive(Document), mapping)
+rows = decompose(source, configured)
+assert rows["persons"][0]["display_name"] == "Ada"
+assert reconstruct(rows, configured) == source
+```
+
+Paths follow native member names with transparent list/map membership; fixed
+tuple slots use ordinal segments. `""` selects the root. Table names apply to
+root, collection and recursive-link rows; nonrecursive records remain inline.
+`column` names scalar projections, and `prefix` scopes a record's projections.
+Explicit names preserve their spelling. A collection rename changes its anonymous
+`__item` descendants, not independently named descendant uses.
+
+Finite deeper recursive overrides apply only at their authored uses. Once those
+paths are exhausted, execution reuses an ordinary recursive role. Prepared
+programs do not retain mutable mapping input. Unknown paths, inapplicable options,
+and physical table/column collisions fail before data is read.
+
+Explicit generated keys, strict positions, ordered collections, separate tables,
+and normalized presence select the implemented policies. Known later strategies
+are declarable but fail during preparation rather than being silently ignored.
+Canonical strategy types live in `mountainash_structuremap.mapping`; these
+declarations do not supply casts, alternate bindings or wire execution.
+
 ### Native boundary and normalization
 
 The plain-dataclass binding supports introspection, reading and construction,
 not wire parsing, serialization, native validation or supplied-field presence.
 Construction uses the class normally, including its `__post_init__`; it is not
-advertised as validation. Mapped `init=False` fields are unsupported.
+advertised as validation. Preparation rejects mapped `init=False` fields and
+unsupplied required constructor-only arguments. Optional constructor-only
+arguments retain their native defaults.
 
 An optional inline record with only null projections and no descendants
 normalizes to `None`. Descendants establish that the containing record exists.
@@ -92,9 +132,10 @@ exceptions remain the chained cause.
 
 ### Not delivered in this slice
 
-Variant execution, per-use overrides and the remaining mapping policies are not
-available. Preparation refuses these requests. The canonical definitions can
-describe more shapes than this executor supports.
+Variants, source-backed keys, lenient/unordered collections, shared tables, casts,
+presence preservation and other binding-specific strategies are not executable.
+Preparation refuses those requests. The canonical definitions and policy
+declarations can describe more than this executor supports.
 
 XML/xsdata, native Pydantic/JSON bindings, decimal/lexical strategies, YAML/JSON
 authoring, Parquet output and incremental execution are separate work. This
@@ -102,8 +143,9 @@ slice does not claim the complete Foundation or rebuild-programme contract.
 
 ## Development
 
-Requires Python 3.12+, Hatch and uv. Mountainash is a source dependency, not a
-package-index publication prerequisite. By default Hatch uses the sibling
+Requires Python 3.12+, Hatch and uv; canonical models use Pydantic 2.5+.
+Mountainash is a source dependency, not a package-index publication prerequisite.
+By default Hatch uses the sibling
 `../mountainash` checkout. Use a clean selected `develop` revision, not another
 session's working branch. Set `MOUNTAINASH_SOURCE_URI` to an absolute `file:` URI
 to use a different clean checkout or source extraction.

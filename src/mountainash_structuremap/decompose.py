@@ -71,7 +71,7 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
         result[prepared.key_column] = key
         if parent is not None:
             result[prepared.parent_column] = parent
-            if prepared.parent_table_column in plan.columns:
+            if len(plan.parent_tables) > 1:
                 result[prepared.parent_table_column] = ""
         return result
 
@@ -140,7 +140,7 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
             member_plan = prepared.tables[edge.table]
             child_key = new_key()
             child_row = empty_row(edge.table, child_key, row_key)
-            if prepared.parent_table_column in member_plan.columns:
+            if len(member_plan.parent_tables) > 1:
                 child_row[prepared.parent_table_column] = row_table
             if prepared.position_column in member_plan.columns:
                 child_row[prepared.position_column] = position
@@ -254,7 +254,7 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
             child_plan = prepared.tables[program.table]
             child_key = new_key()
             child_row = empty_row(program.table, child_key, row_key)
-            if prepared.parent_table_column in child_plan.columns:
+            if len(child_plan.parent_tables) > 1:
                 child_row[prepared.parent_table_column] = row_table
             tables[program.table].append(child_row)
             stack.append(("value", child_plan._program, native_value, child_row, child_key, program.table, -1, None))

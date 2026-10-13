@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+from collections import deque
+from collections.abc import Callable
 from typing import Literal, TypeVar, cast
 
 from mountainash.typespec.spec import FieldSpec, TypeSpec
 from mountainash.typespec.universal_types import UniversalType
 
-from mountainash_structuremap.bindings.dataclass import DataclassBinding
+from mountainash_structuremap.bindings.dataclass import DataclassBinding, validate_constructor
 from mountainash_structuremap.definitions import (
     DerivedModel,
     Map,
@@ -18,7 +20,7 @@ from mountainash_structuremap.definitions import (
     Shape,
 )
 from mountainash_structuremap.errors import StructureMapError
-from mountainash_structuremap.mapping import MappingSpec
+from mountainash_structuremap.mapping import DeclaredBinding, MappingSpec
 from mountainash_structuremap.prepared import (
     LinkProgram,
     MapProgram,
@@ -112,6 +114,17 @@ def _program_fields(program_id: int, programs: dict[int, ValueProgram]) -> list[
     return []
 
 
+def _program_scalar_paths(program_id: int, programs: dict[int, ValueProgram]) -> list[tuple[str, str]]:
+    program = programs[program_id]
+    if isinstance(program, ScalarProgram):
+        return [(program.column, program.path)]
+    if isinstance(program, RecordProgram):
+        return [item for _, child in program.members for item in _program_scalar_paths(child, programs)]
+    if isinstance(program, TupleProgram):
+        return [item for child in program.items for item in _program_scalar_paths(child, programs)]
+    return []
+
+
 def prepare(
     model: DerivedModel[T],
     mapping: MappingSpec | None = None,
@@ -126,25 +139,193 @@ def prepare(
             path=mapping.root or "",
             remedy="Select the derived model root",
         )
-    if mapping.defaults.binding not in (None, model.binding):
+    requested_binding = mapping.defaults.binding
+    declared_binding = requested_binding.name if isinstance(requested_binding, DeclaredBinding) else requested_binding
+    if declared_binding not in (None, "detected", model.binding):
         raise StructureMapError(
             "binding_mismatch",
             "Requested mapping binding differs from derivation",
             remedy="Derive and prepare with the same binding",
         )
-    if validate_native or mapping.defaults.presence != "normalize" or mapping.defaults.positions != "strict":
+    if validate_native:
         raise StructureMapError(
             "unavailable_capability",
-            "This binding supports Normalize presence and strict positions, without Validate",
+            "The dataclass binding does not provide native validation",
             owner="binding gap",
-            remedy="Use presence='normalize', positions='strict', validate_native=False",
+            remedy="Set validate_native=False; ordinary dataclass construction does not provide native validation",
         )
-    if mapping.overrides:
+    if mapping.defaults.presence != "normalize" or mapping.defaults.positions != "strict":
+        path = "presence" if mapping.defaults.presence != "normalize" else "positions"
         raise StructureMapError(
             "unavailable_capability",
-            "Per-use overrides are not available in this delivery",
-            remedy="Prepare without overrides; per-use authoring is not delivered yet",
+            f"The requested {path} policy is not available in this delivery",
+            owner="binding gap",
+            path=path,
+            remedy="Use presence='normalize' and positions='strict'",
         )
+    global_unavailable = (
+        "construction",
+        "variant_layout",
+        "role_discriminator",
+        "shared_types",
+        "value_space",
+        "json_numbers",
+        "duplicate_members",
+        "open_content",
+    )
+    for policy in global_unavailable:
+        if getattr(mapping.defaults, policy) is not None:
+            raise StructureMapError(
+                "unavailable_capability",
+                f"The declared {policy} policy is not available in this delivery",
+                owner="binding gap",
+                path=policy,
+                remedy=f"No {policy} strategy is available in Foundation; omit this request to use the plain-dataclass binding",
+            )
+
+    recursive_component = _components(cast(DerivedModel[object], model))
+
+    def collection_payload(shape: Shape) -> Shape:
+        while isinstance(shape, (Nullable, Sequence, Map)):
+            shape = shape.item if isinstance(shape, Sequence) else shape.value
+        return shape
+
+    def target(path: str) -> tuple[str, Shape]:
+        if not path:
+            return "root", RecordRef(definition=model.structure.root)
+        current: Shape = RecordRef(definition=model.structure.root)
+        source_definition = model.structure.root
+        for segment in path.split("/"):
+            current = collection_payload(current)
+            if isinstance(current, RecordRef):
+                source_definition = current.definition
+                members = {
+                    member.name: member.shape for member in model.structure.definitions[current.definition].members
+                }
+                if segment in members:
+                    current = members[segment]
+                    continue
+            elif isinstance(current, Positional) and segment.isdecimal():
+                index = int(segment)
+                if str(index) == segment and index < len(current.items):
+                    current = current.items[index]
+                    continue
+            raise StructureMapError(
+                "unknown_path",
+                f"Mapping path does not exist at {segment!r}",
+                path=path,
+                remedy="Use declared native member names, transparent collection membership and fixed tuple ordinals",
+            )
+        unwrapped = current.value if isinstance(current, Nullable) else current
+        if isinstance(unwrapped, (Sequence, Map)):
+            kind = "collection"
+        elif isinstance(unwrapped, RecordRef):
+            kind = (
+                "link"
+                if recursive_component[source_definition] == recursive_component[unwrapped.definition]
+                else "record"
+            )
+        else:
+            kind = (
+                "scalar"
+                if isinstance(unwrapped, Scalar)
+                else "tuple"
+                if isinstance(unwrapped, Positional)
+                else "unsupported"
+            )
+        return kind, current
+
+    def unavailable(path: str, policy: str) -> None:
+        raise StructureMapError(
+            "unavailable_capability",
+            f"The declared {policy} policy is not available in this delivery",
+            owner="binding gap",
+            path=path,
+            remedy={
+                "presence": "Use presence='normalize'; plain dataclasses cannot retain supplied-field presence",
+                "positions": "Use positions='strict'; lenient reconstruction is unavailable in Foundation",
+                "key": "Use key='generated'; source-backed keys are unavailable in Foundation",
+                "ordered": "Use ordered=True; unordered collections are unavailable in Foundation",
+                "collection_table": "Use collection_table='separate' and distinct table names",
+            }.get(policy, f"No {policy} strategy is available in Foundation; omit the request to use this binding"),
+        )
+
+    for path, override in mapping.overrides.items():
+        kind, shape = target(path)
+        payload = collection_payload(shape) if kind == "collection" else shape
+        if override.table is not None and kind not in ("root", "collection", "link"):
+            raise StructureMapError(
+                "inapplicable_override",
+                "Table names apply only to root, collection or recursive link uses",
+                path=path,
+                remedy="Set table on a use that owns a row; nonrecursive records are inline",
+            )
+        if override.column is not None and (
+            kind not in ("scalar", "collection") or (kind == "collection" and not isinstance(payload, Scalar))
+        ):
+            raise StructureMapError(
+                "inapplicable_override",
+                "Column names apply only to scalar payload uses",
+                path=path,
+                remedy="Set column on a scalar or scalar collection use",
+            )
+        if override.prefix is not None and not (
+            kind in ("root", "record", "link") or (kind == "collection" and isinstance(payload, RecordRef))
+        ):
+            raise StructureMapError(
+                "inapplicable_override",
+                "Prefixes apply only to record projections",
+                path=path,
+                remedy="Set prefix on a record or record collection use",
+            )
+        binding = override.binding
+        if binding is not None:
+            selected = binding.name if isinstance(binding, DeclaredBinding) else binding
+            if selected not in ("detected", model.binding):
+                raise StructureMapError(
+                    "binding_mismatch",
+                    "Requested mapping binding differs from derivation",
+                    path=path,
+                    remedy="Derive and prepare with the same binding",
+                )
+        for policy in global_unavailable:
+            if getattr(override, policy) is not None:
+                unavailable(path, policy)
+        collection_policies = ("key", "positions", "ordered", "collection_table")
+        for policy in collection_policies:
+            if getattr(override, policy) is not None and kind != "collection":
+                raise StructureMapError(
+                    "inapplicable_override",
+                    f"The {policy} policy applies only to a collection use",
+                    path=path,
+                    remedy="Set this policy on a collection use",
+                )
+        unsupported = (
+            "key",
+            "positions",
+            "ordered",
+            "collection_table",
+            "discriminator",
+            "variant_layout",
+            "role_discriminator",
+            "shared_types",
+            "cast",
+            "presence",
+            "value_space",
+            "json_numbers",
+            "duplicate_members",
+            "open_content",
+        )
+        for policy in unsupported:
+            value = getattr(override, policy)
+            if value is not None and not (
+                (policy == "key" and value == "generated")
+                or (policy == "positions" and value == "strict")
+                or (policy == "ordered" and value is True)
+                or (policy == "collection_table" and value == "separate")
+                or (policy == "presence" and value == "normalize")
+            ):
+                unavailable(path, policy)
 
     naming = mapping.defaults.naming
     key_col = naming.metadata_namespace + "key"
@@ -156,312 +337,269 @@ def prepare(
     programs: dict[int, ValueProgram] = {}
     next_program = 0
     tables: dict[str, dict[str, object]] = {}
-    recursive_component = _components(cast(DerivedModel[object], model))
-    role_records: dict[tuple[str, str, bool], int] = {}
-    collection_roles: dict[str, tuple[str, str, str, str]] = {}
-    recursive_roles: dict[tuple[str, str, str], str] = {}
+    roles: dict[tuple[str, str, str, str, tuple[tuple[str, str], ...]], str] = {}
+    pending: deque[Callable[[], None]] = deque()
+    layout_overrides = tuple(
+        path
+        for path, override in sorted(mapping.overrides.items())
+        if any(value is not None for value in (override.table, override.column, override.prefix))
+    )
 
     def norm(value: str) -> str:
         return _snake(value) if naming.column_naming == "snake_case" else value
 
-    def path_table(path: str) -> str:
-        return "__".join(norm(part) for part in path.split("/") if part) or "root"
+    def join(path: str, segment: str) -> str:
+        return f"{path}/{segment}" if path else segment
 
-    def recursive_table(entry_path: str, source_definition: str, member_role: str) -> str:
-        role = (entry_path, source_definition, member_role)
-        table = recursive_roles.get(role)
-        if table is None:
-            table = path_table("/".join(filter(None, (entry_path, member_role))))
-            recursive_roles[role] = table
-        return table
-
-    def claim_collection_role(
-        table: str, entry_path: str, source_definition: str, member_role: str, kind: str, path: str
-    ) -> None:
-        role = (entry_path, source_definition, member_role, kind)
-        existing = collection_roles.get(table)
-        if existing is not None and existing != role:
-            raise StructureMapError(
-                "table_collision",
-                f"Multiple uses resolve to table {table!r}",
-                path=path,
-                remedy="Use distinct field paths or a different naming policy",
-            )
-        collection_roles[table] = role
-
-    def alloc(program: ValueProgram) -> int:
+    def reserve() -> int:
         nonlocal next_program
         program_id = next_program
         next_program += 1
-        programs[program_id] = program
         return program_id
 
-    def add_table(
-        table: str,
-        path: str,
-        parent: str,
-        program_id: int,
-        kind: str,
-        nullable_member: bool,
-    ) -> None:
-        existing = tables.get(table)
-        if existing is None:
-            tables[table] = {
-                "path": path,
-                "parents": {parent},
-                "program": program_id,
-                "kind": kind,
-                "nullable_member": nullable_member,
-            }
-        else:
-            if existing["program"] != program_id:
-                raise StructureMapError(
-                    "table_collision",
-                    f"Multiple uses resolve to table {table!r}",
-                    path=path,
-                    remedy="Use distinct field paths or a different naming policy",
-                )
-            cast(set[str], existing["parents"]).add(parent)
+    def emit(program: ValueProgram, destination: int | None = None) -> int:
+        program_id = reserve() if destination is None else destination
+        programs[program_id] = program
+        return program_id
 
     def record_program(
         definition: str,
         path: str,
-        prefix: str = "",
+        authored_path: str,
+        prefix: str,
         *,
+        family: str,
+        owner: str,
         nullable: bool = False,
-        entry_path: str = "",
-        owner_role: str = "root",
-        row_table: str | None = None,
-        row_kind: str = "single",
-        row_parent: str = "root",
-        nullable_member: bool = False,
+        destination: int | None = None,
     ) -> int:
-        role_key = (row_table, definition, nullable) if row_table is not None else None
-        if role_key is not None and role_key in role_records:
-            assert row_table is not None
-            program_id = role_records[role_key]
-            add_table(row_table, path, row_parent, program_id, row_kind, nullable_member)
-            return program_id
-        program_id = alloc(RecordProgram(path, definition, (), nullable))
-        if role_key is not None:
-            assert row_table is not None
-            role_records[role_key] = program_id
-            add_table(row_table, path, row_parent, program_id, row_kind, nullable_member)
-        members: list[tuple[str, int]] = []
-        for member in model.structure.definitions[definition].members:
-            member_path = "/".join(filter(None, (path, member.name)))
-            col = norm("_".join(filter(None, (prefix, member.name))))
-            child = compile_shape(
-                member.shape,
-                member_path,
-                col,
-                owner_role=row_table or owner_role,
-                source_definition=definition,
-                entry_path=entry_path,
-                relative_path=member.name,
+        members = model.structure.definitions[definition].members
+        validate_constructor(
+            model.native_types[definition], tuple(member.name for member in members), path=authored_path
+        )
+        children = tuple(
+            (
+                member.name,
+                compile_shape(
+                    member.shape,
+                    join(path, member.name),
+                    join(authored_path, member.name),
+                    "_".join(filter(None, (prefix, norm(member.name)))),
+                    family=family,
+                    owner=owner,
+                    source_definition=definition,
+                    relative_path=member.name,
+                ),
             )
-            members.append((member.name, child))
-        programs[program_id] = RecordProgram(path, definition, tuple(members), nullable)
-        return program_id
+            for member in members
+        )
+        return emit(RecordProgram(authored_path, definition, children, nullable), destination)
+
+    def row_table(
+        payload: Shape,
+        path: str,
+        authored_path: str,
+        *,
+        family: str,
+        owner: str,
+        source_definition: str,
+        relative_path: str,
+        kind: Literal["single", "sequence", "map"],
+        nullable_member: bool,
+        anonymous_parent: str | None = None,
+    ) -> str:
+        # Context contains only suffixes of finite authored selectors and their
+        # declaration identities. Runtime depth is never an interning key.
+        context = tuple(
+            (selector[len(authored_path) :].lstrip("/"), selector)
+            for selector in layout_overrides
+            if selector == authored_path or selector.startswith(authored_path + "/")
+        )
+        role = (family, source_definition, relative_path, kind, context)
+        if role in roles:
+            table = roles[role]
+            cast(set[str], tables[table]["parents"]).add(owner)
+            return table
+        override = mapping.overrides.get(authored_path)
+        if anonymous_parent is not None:
+            table = anonymous_parent + "__item"
+        elif override is not None and override.table is not None:
+            table = override.table
+        else:
+            table = "__".join(norm(part) for part in path.split("/"))
+        if table in tables:
+            prior = tables[table]["path"]
+            raise StructureMapError(
+                "table_collision",
+                f"Multiple uses at {prior!r} and {authored_path!r} resolve to table {table!r}",
+                path=authored_path,
+                table=table,
+                remedy="Choose distinct explicit table names; shared tables are unavailable in Foundation",
+            )
+        payload_id = reserve()
+        roles[role] = table
+        # Reserve every row role before descending, including container payloads.
+        tables[table] = {
+            "path": authored_path,
+            "parents": {owner},
+            "program": payload_id,
+            "kind": kind,
+            "nullable_member": nullable_member,
+        }
+
+        def compile_payload() -> None:
+            if isinstance(payload, RecordRef):
+                next_family = (
+                    family
+                    if recursive_component[source_definition] == recursive_component[payload.definition]
+                    else path
+                )
+                prefix = override.prefix if override is not None and override.prefix is not None else ""
+                record_program(
+                    payload.definition,
+                    path,
+                    authored_path,
+                    prefix,
+                    family=next_family,
+                    owner=table,
+                    destination=payload_id,
+                )
+            else:
+                nested = isinstance(payload, (Sequence, Map))
+                compile_shape(
+                    payload,
+                    join(path, "item") if nested else path,
+                    authored_path,
+                    "value" if isinstance(payload, (Scalar, Nullable)) else "",
+                    family=family,
+                    owner=table,
+                    source_definition=source_definition,
+                    relative_path=join(relative_path, "item") if nested else relative_path,
+                    anonymous_parent=table if nested else None,
+                    destination=payload_id,
+                )
+
+        pending.append(compile_payload)
+        return table
 
     def compile_shape(
         shape: Shape,
         path: str,
+        authored_path: str,
         column: str,
         *,
-        owner_role: str,
+        family: str,
+        owner: str,
         source_definition: str,
-        entry_path: str,
         relative_path: str,
+        anonymous_parent: str | None = None,
+        destination: int | None = None,
     ) -> int:
         nullable = isinstance(shape, Nullable)
         value_shape = shape.value if isinstance(shape, Nullable) else shape
+        override = mapping.overrides.get(authored_path)
         if isinstance(value_shape, Scalar):
-            return alloc(ScalarProgram(path, column, value_shape.type, nullable))
+            scalar_column = override.column if override is not None and override.column is not None else column
+            return emit(ScalarProgram(authored_path, scalar_column, value_shape.type, nullable), destination)
         if isinstance(value_shape, RecordRef):
-            same_component = recursive_component.get(source_definition) == recursive_component.get(
-                value_shape.definition
-            )
-            if same_component:
-                table = recursive_table(entry_path, source_definition, relative_path)
-                record_program(
-                    value_shape.definition,
+            if recursive_component[source_definition] == recursive_component[value_shape.definition]:
+                table = row_table(
+                    value_shape,
                     path,
-                    nullable=False,
-                    entry_path=entry_path,
-                    row_table=table,
-                    row_kind="single",
-                    row_parent=owner_role,
+                    authored_path,
+                    family=family,
+                    owner=owner,
+                    source_definition=source_definition,
+                    relative_path=relative_path,
+                    kind="single",
+                    nullable_member=False,
                 )
-                return alloc(LinkProgram(path, table, nullable))
+                return emit(LinkProgram(authored_path, table, nullable), destination)
+            prefix = override.prefix if override is not None and override.prefix is not None else column
             return record_program(
                 value_shape.definition,
                 path,
-                prefix=column,
+                authored_path,
+                prefix,
+                family=path,
+                owner=owner,
                 nullable=nullable,
-                entry_path=path,
-                owner_role=owner_role,
+                destination=destination,
             )
-        if isinstance(value_shape, Sequence):
-            table = path_table("/".join(filter(None, (entry_path, relative_path))))
-            member_nullable = isinstance(value_shape.item, Nullable)
-            member_shape = value_shape.item.value if isinstance(value_shape.item, Nullable) else value_shape.item
-            item_path = f"{path}/item" if isinstance(member_shape, (Sequence, Map)) else path
-            item_relative = f"{relative_path}/item" if isinstance(member_shape, (Sequence, Map)) else relative_path
-            structured = not isinstance(member_shape, Scalar)
-            claim_collection_role(table, entry_path, source_definition, relative_path, "sequence", path)
-            existing = tables.get(table)
-            if existing is not None:
-                if existing["kind"] != "sequence" or existing["nullable_member"] != (member_nullable and structured):
+        if isinstance(value_shape, (Sequence, Map)):
+            if isinstance(value_shape, Map):
+                if not isinstance(value_shape.key, Scalar) or value_shape.key.type != "str":
                     raise StructureMapError(
-                        "table_collision",
-                        f"Multiple uses resolve to table {table!r}",
-                        path=path,
-                        remedy="Choose distinct table names for distinct collection uses",
+                        "unavailable_construct",
+                        "Maps require string keys",
+                        path=authored_path,
+                        owner="binding gap",
+                        remedy="Declare string map keys; other key types are unavailable in Foundation",
                     )
-                add_table(
-                    table,
-                    path,
-                    owner_role,
-                    cast(int, existing["program"]),
-                    "sequence",
-                    member_nullable and structured,
-                )
-                return alloc(SequenceProgram(path, table, nullable))
-            if isinstance(member_shape, RecordRef):
-                item_entry = (
-                    entry_path
-                    if recursive_component.get(source_definition) == recursive_component.get(member_shape.definition)
-                    else item_path
-                )
-                payload = record_program(
-                    member_shape.definition,
-                    item_path,
-                    entry_path=item_entry,
-                    row_table=table,
-                    row_kind="sequence",
-                    row_parent=owner_role,
-                    nullable_member=member_nullable and structured,
-                )
+                member = value_shape.value
+                kind: Literal["single", "sequence", "map"] = "map"
             else:
-                payload_shape = (
-                    value_shape.item if member_nullable and isinstance(member_shape, Scalar) else member_shape
-                )
-                payload = compile_shape(
-                    payload_shape,
-                    item_path,
-                    "value" if isinstance(member_shape, Scalar) else "",
-                    owner_role=table,
-                    source_definition=source_definition,
-                    entry_path=entry_path,
-                    relative_path=item_relative,
-                )
-                add_table(
-                    table,
-                    path,
-                    owner_role,
-                    payload,
-                    "sequence",
-                    member_nullable and structured,
-                )
-            return alloc(SequenceProgram(path, table, nullable))
-        if isinstance(value_shape, Map):
-            if not isinstance(value_shape.key, Scalar) or value_shape.key.type != "str":
-                raise StructureMapError(
-                    "unavailable_construct",
-                    "Maps require string keys",
-                    path=path,
-                    owner="binding gap",
-                    remedy="Declare string map keys; other key types are unavailable in Foundation",
-                )
-            table = path_table("/".join(filter(None, (entry_path, relative_path))))
-            member_nullable = isinstance(value_shape.value, Nullable)
-            member_shape = value_shape.value.value if isinstance(value_shape.value, Nullable) else value_shape.value
-            item_path = f"{path}/item" if isinstance(member_shape, (Sequence, Map)) else path
-            item_relative = f"{relative_path}/item" if isinstance(member_shape, (Sequence, Map)) else relative_path
-            structured = not isinstance(member_shape, Scalar)
-            claim_collection_role(table, entry_path, source_definition, relative_path, "map", path)
-            existing = tables.get(table)
-            if existing is not None:
-                if existing["kind"] != "map" or existing["nullable_member"] != (member_nullable and structured):
-                    raise StructureMapError(
-                        "table_collision",
-                        f"Multiple uses resolve to table {table!r}",
-                        path=path,
-                        remedy="Choose distinct table names for distinct collection uses",
-                    )
-                add_table(
-                    table,
-                    path,
-                    owner_role,
-                    cast(int, existing["program"]),
-                    "map",
-                    member_nullable and structured,
-                )
-                return alloc(MapProgram(path, table, nullable))
-            if isinstance(member_shape, RecordRef):
-                item_entry = (
-                    entry_path
-                    if recursive_component.get(source_definition) == recursive_component.get(member_shape.definition)
-                    else item_path
-                )
-                payload = record_program(
-                    member_shape.definition,
-                    item_path,
-                    entry_path=item_entry,
-                    row_table=table,
-                    row_kind="map",
-                    row_parent=owner_role,
-                    nullable_member=member_nullable and structured,
-                )
-            else:
-                payload_shape = (
-                    value_shape.value if member_nullable and isinstance(member_shape, Scalar) else member_shape
-                )
-                payload = compile_shape(
-                    payload_shape,
-                    item_path,
-                    "value" if isinstance(member_shape, Scalar) else "",
-                    owner_role=table,
-                    source_definition=source_definition,
-                    entry_path=entry_path,
-                    relative_path=item_relative,
-                )
-                add_table(
-                    table,
-                    path,
-                    owner_role,
-                    payload,
-                    "map",
-                    member_nullable and structured,
-                )
-            return alloc(MapProgram(path, table, nullable))
+                member = value_shape.item
+                kind = "sequence"
+            inner = member.value if isinstance(member, Nullable) else member
+            marked = isinstance(member, Nullable) and not isinstance(inner, Scalar)
+            table = row_table(
+                inner if marked else member,
+                path,
+                authored_path,
+                family=family,
+                owner=owner,
+                source_definition=source_definition,
+                relative_path=relative_path,
+                kind=kind,
+                nullable_member=marked,
+                anonymous_parent=anonymous_parent,
+            )
+            edge: ValueProgram = (
+                MapProgram(authored_path, table, nullable)
+                if kind == "map"
+                else SequenceProgram(authored_path, table, nullable)
+            )
+            return emit(edge, destination)
         if isinstance(value_shape, Positional):
             items = tuple(
                 compile_shape(
                     item,
-                    f"{path}/{index}",
-                    norm(f"{column}_{index}"),
-                    owner_role=owner_role,
+                    join(path, str(index)),
+                    join(authored_path, str(index)),
+                    f"{column}_{index}",
+                    family=family,
+                    owner=owner,
                     source_definition=source_definition,
-                    entry_path=entry_path,
-                    relative_path=f"{relative_path}/{index}",
+                    relative_path=join(relative_path, str(index)),
                 )
                 for index, item in enumerate(value_shape.items)
             )
-            return alloc(TupleProgram(path, items, nullable))
+            return emit(TupleProgram(authored_path, items, nullable), destination)
         raise StructureMapError(
             "unavailable_construct",
             "This structural shape has no executor in this delivery",
-            path=path,
+            path=authored_path,
             owner="binding gap",
-            remedy="Use scalar, record, sequence, map, or fixed tuple shapes",
+            remedy="Use scalar, record, sequence, map, or fixed tuple shapes; variants are unavailable in Foundation",
         )
 
-    root_id = record_program(model.structure.root, "")
-    # Recursive tables are interned by row role before their payload is expanded. Complete
-    # their possible-parent sets before fixing schemas and parent-table metadata.
-    add_table("root", "", "", root_id, "root", False)
+    root_override = mapping.overrides.get("")
+    root_name = root_override.table if root_override and root_override.table is not None else "root"
+    root_prefix = root_override.prefix if root_override and root_override.prefix is not None else ""
+    root_id = reserve()
+    tables[root_name] = {
+        "path": "",
+        "parents": {""},
+        "program": root_id,
+        "kind": "root",
+        "nullable_member": False,
+    }
+    record_program(model.structure.root, "", "", root_prefix, family="", owner=root_name, destination=root_id)
+    # Discover sibling row roles before descending: recursive children must not
+    # lend their traversal depth to an ordinary sibling's default table name.
+    while pending:
+        pending.popleft()()
     plans: dict[str, TablePlan] = {}
     for name, descriptor in tables.items():
         program_id = cast(int, descriptor["program"])
@@ -481,12 +619,32 @@ def prepare(
         fields.extend(_program_fields(program_id, programs))
         columns = tuple(field.name for field in fields)
         if len(set(columns)) != len(columns):
+            scalar_sources = _program_scalar_paths(program_id, programs)
+            seen: dict[str, str] = {}
+            conflicts: list[tuple[str, str, str]] = []
+            for column, source_path in scalar_sources:
+                if column in seen:
+                    conflicts.append((column, seen[column], source_path))
+                else:
+                    seen[column] = source_path
+            if not conflicts:
+                metadata_columns = (
+                    {field.name for field in fields[: -len(scalar_sources)]}
+                    if scalar_sources
+                    else {field.name for field in fields}
+                )
+                conflicts = [
+                    (column, f"metadata:{column}", source_path)
+                    for column, source_path in scalar_sources
+                    if column in metadata_columns
+                ]
+            column, first_path, second_path = conflicts[0]
             raise StructureMapError(
                 "column_collision",
-                f"Columns collide in table {name!r}",
-                path=cast(str, descriptor["path"]),
+                f"Column {column!r} in table {name!r} maps both {first_path!r} and {second_path!r}",
+                path=second_path,
                 table=name,
-                remedy="Change column_naming or metadata_namespace, or use distinct field names",
+                remedy="Change column_naming or metadata_namespace, or use distinct explicit names",
             )
         plans[name] = TablePlan(
             name=name,
@@ -498,16 +656,16 @@ def prepare(
             _kind=cast(Literal["root", "single", "sequence", "map"], kind),
             _nullable_member=cast(bool, descriptor["nullable_member"]),
         )
-    binding = DataclassBinding()
+    native_binding = DataclassBinding()
     return PreparedMapping(
         root=root_id,
         programs=programs,
-        root_table="root",
+        root_table=root_name,
         root_type=cast(type[T], model.native_types[model.structure.root]),
         tables=plans,
         native_types=model.native_types,
-        binding=binding,
-        capabilities=binding.capabilities,
+        binding=native_binding,
+        capabilities=native_binding.capabilities,
         key_column=key_col,
         parent_column=parent_col,
         position_column=position_col,

@@ -210,7 +210,7 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                     row=index,
                     column=prepared.parent_column,
                 )
-            if prepared.parent_table_column in plan.columns:
+            if len(plan.parent_tables) > 1:
                 parent_table = row[prepared.parent_table_column]
                 if type(parent_table) is not str or parent_table not in allowed_parents:
                     raise _error(

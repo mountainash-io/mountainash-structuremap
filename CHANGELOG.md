@@ -11,4 +11,8 @@
 - Add finite recursive role tables and explicit-stack traversal, distinguishing containment cycles from repeated use of the same object.
 - Preserve nested lists, insertion-ordered string maps, fixed tuples, and nullable structured members with explicit null markers.
 - Retain declaring-class annotation namespaces under inheritance and support empty fixed tuples.
-- Reject detached recursive rows and contradictory null members without discarding business columns named like inactive metadata.
+- Reject detached recursive rows and contradictory null members; retain inactive metadata-like names as business columns in both execution directions.
+- Add canonical per-use table, column and prefix overrides, finite recursive override contexts, and configuration-isolated preparation.
+- Validate native constructor signatures and reject unsupported mapping policies before reading values or calling constructors.
+- Keep anonymous collection levels transparent to named selectors, reserve container roles before recursive expansion, and preserve ordinary sibling role names during compilation.
+- Keep future cast declarations portable without introducing a separate dtype or expression vocabulary; require Pydantic 2.5+ for JSON-compatible declaration values.

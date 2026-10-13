@@ -3,7 +3,7 @@
 import json
 from dataclasses import dataclass, field
 
-from mountainash_structuremap import decompose, derive, prepare, reconstruct
+from mountainash_structuremap import MappingSpec, Naming, UseOverride, decompose, derive, prepare, reconstruct
 
 
 @dataclass
@@ -57,6 +57,21 @@ def main() -> None:
     rebuilt_tree = reconstruct(recursive_delivery, prepare(derive(Node)))
     assert rebuilt_tree == Node("root", [Node("branch", [Node("leaf")]), Node("sibling")])
     print("Reconstructed recursive object:", rebuilt_tree)
+
+    mapping = MappingSpec(
+        defaults={"naming": Naming(metadata_namespace="recon_")},
+        overrides={
+            "people": UseOverride(table="persons"),
+            "people/name": UseOverride(column="display_name"),
+            "people/home": UseOverride(prefix="residence"),
+        },
+    )
+    configured_rows = decompose(source, prepare(derive(Document), mapping))
+    print("Configured tables:")
+    print(json.dumps(configured_rows, indent=2))
+    assert configured_rows["persons"][0]["display_name"] == "Ada"
+    assert configured_rows["persons"][0]["residence_city"] == "Oslo"
+    assert reconstruct(configured_rows, prepare(derive(Document), mapping)) == source
 
 
 if __name__ == "__main__":

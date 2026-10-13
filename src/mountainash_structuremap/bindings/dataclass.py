@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import Field, fields, is_dataclass
+from inspect import signature
 from types import UnionType
 from typing import Any, Literal, Tuple, Union, get_args, get_origin
 
@@ -113,16 +114,30 @@ def record_fields(cls: type, *, detected: bool, path: str) -> tuple[Field[Any], 
             owner="binding gap",
             remedy="The xsdata binding is unavailable; declare binding='dataclass' only if this metadata is not XML",
         )
-    for item in members:
-        if not item.init:
+    return members
+
+
+def validate_constructor(cls: type, member_names: tuple[str, ...], *, path: str) -> None:
+    mapped = set(member_names)
+    for item in fields(cls):
+        if item.name in mapped and not item.init:
             raise StructureMapError(
                 "unsupported_constructor",
                 "Mapped field does not participate in construction",
                 path="/".join(filter(None, (path, item.name))),
                 owner="native limitation",
-                remedy="Use a constructor-participating field",
+                remedy="Use a constructor-participating field; custom construction is unavailable in Foundation",
             )
-    return members
+    try:
+        signature(cls).bind(**dict.fromkeys(member_names))
+    except (TypeError, ValueError) as exc:
+        raise StructureMapError(
+            "unsupported_constructor",
+            f"Mapped fields cannot satisfy the native constructor: {exc}",
+            path=path,
+            owner="native limitation",
+            remedy="Use a constructor accepting the mapped field keywords, with defaults for constructor-only arguments",
+        ) from exc
 
 
 def describe_annotation(

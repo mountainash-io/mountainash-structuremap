@@ -196,3 +196,15 @@ def test_inactive_metadata_names_remain_business_columns_on_null_members():
         reconstruct(tables, prepared)
     assert caught.value.code == "contradictory_null_member"
     assert caught.value.table == "entries"
+
+
+def test_recursive_records_inside_nested_containers_keep_finite_roles():
+    @dataclass
+    class NestedNode:
+        label: str
+        children: list[list["NestedNode"]]
+
+    value = NestedNode("root", [[], [NestedNode("child", [[NestedNode("leaf", [])]])]])
+    prepared = prepare(derive(NestedNode))
+    tables = decompose(value, prepared)
+    assert reconstruct(tables, prepare(derive(NestedNode))) == value

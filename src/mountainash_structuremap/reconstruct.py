@@ -104,7 +104,7 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
     actual_names = set(tables)
     if actual_names != expected_names:
         missing = sorted(expected_names - actual_names)
-        extra_names = sorted(actual_names - expected_names)
+        extra_names = sorted(actual_names - expected_names, key=repr)
         raise _error(
             "table_set_mismatch",
             f"Missing tables {missing!r}; unexpected tables {extra_names!r}",
@@ -392,9 +392,76 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                         row=index,
                     )
 
+    # Validate logical activity and reachability before any native constructor.
+    # This walk uses row references, not a materialized native-value tree.
+    consumed: set[tuple[str, str]] = set()
+    validation: list[tuple[int, Mapping[str, Cell], str, int]] = [(prepared.root, root_row, prepared.root_table, 0)]
+    while validation:
+        value_id, value_row, value_table, value_number = validation.pop()
+        value_program = prepared.programs[value_id]
+        value_key = cast(str, value_row[prepared.key_column])
+        consumed.add((value_table, value_key))
+        value_plan = prepared.tables[value_table]
+        if value_plan._nullable_member and value_row[prepared.null_column] is True:
+            continue
+        if isinstance(value_program, ScalarProgram):
+            _scalar_cell(value_row[value_program.column], value_program, table=value_table, row_number=value_number)
+        elif isinstance(value_program, (RecordProgram, TupleProgram)):
+            if value_program.nullable and no_content(value_id, value_row, value_table, value_key):
+                continue
+            child_ids = (
+                tuple(child for _, child in value_program.members)
+                if isinstance(value_program, RecordProgram)
+                else value_program.items
+            )
+            validation.extend((child, value_row, value_table, value_number) for child in reversed(child_ids))
+        elif isinstance(value_program, (SequenceProgram, MapProgram, LinkProgram)):
+            children = groups.get((value_program.table, value_table, value_key), [])
+            if isinstance(value_program, LinkProgram) and not children and not value_program.nullable:
+                raise _error(
+                    "missing_required_link",
+                    "Required recursive link has no row",
+                    path=value_program.path,
+                    remedy="Supply the linked occurrence",
+                    table=value_table,
+                    row=value_number,
+                )
+            child_program = prepared.tables[value_program.table]._program
+            validation.extend(
+                (
+                    child_program,
+                    child,
+                    value_program.table,
+                    row_numbers[value_program.table][cast(str, child[prepared.key_column])],
+                )
+                for child in reversed(children)
+            )
+        else:
+            raise _error(
+                "invalid_prepared_mapping",
+                f"Unsupported program {type(value_program).__name__}",
+                path=value_program.path,
+                remedy="Prepare a supported value shape",
+                table=value_table,
+                row=value_number,
+            )
+    for table_name, rows in ordered_rows.items():
+        if table_name == prepared.root_table:
+            continue
+        for index, row in enumerate(rows):
+            key = cast(str, row[prepared.key_column])
+            if (table_name, key) not in consumed:
+                raise _error(
+                    "unattached_row",
+                    "Occurrence row is not reachable from the root payload",
+                    path=prepared.tables[table_name].source_path,
+                    remedy="Attach the row or remove it",
+                    table=table_name,
+                    row=index,
+                )
+
     # Postorder evaluation tasks append results; no Python recursion is used for native depth.
     results: list[object] = []
-    consumed: set[tuple[str, str]] = set()
 
     def push_eval(
         stack: list[_EvalTask], program_id: int, row: Mapping[str, Cell], table_name: str, row_number: int
@@ -443,7 +510,6 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                     exc.row = row_number
                 raise
             results.append(constructed)
-            consumed.add((row_table, cast(str, row[prepared.key_column])))
             continue
         if op == "finish_tuple":
             count = cast(int, extra)
@@ -469,14 +535,13 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
         program: ValueProgram = prepared.programs[program_id]
         key = cast(str, row[prepared.key_column])
         if row_table != prepared.root_table:
-            consumed.add((row_table, key))
             row_plan = prepared.tables[row_table]
             if row_plan._nullable_member and row[prepared.null_column] is True:
                 results.append(None)
                 continue
 
         if isinstance(program, ScalarProgram):
-            results.append(_scalar_cell(row[program.column], program, table=row_table, row_number=row_number))
+            results.append(row[program.column])
             continue
         if isinstance(program, RecordProgram):
             if program.nullable and no_content(program_id, row, row_table, key):
@@ -560,20 +625,6 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
             row=row_number,
         )
 
-    for table_name, rows in ordered_rows.items():
-        if table_name == prepared.root_table:
-            continue
-        for index, row in enumerate(rows):
-            key = cast(str, row[prepared.key_column])
-            if (table_name, key) not in consumed:
-                raise _error(
-                    "unattached_row",
-                    "Occurrence row is not reachable from the root payload",
-                    path=prepared.tables[table_name].source_path,
-                    remedy="Attach the row or remove it",
-                    table=table_name,
-                    row=index,
-                )
     if len(results) != 1:
         raise _error(
             "invalid_prepared_mapping",

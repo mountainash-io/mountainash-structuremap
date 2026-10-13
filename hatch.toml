@@ -4,6 +4,7 @@ installer = "uv"
 skip-install = false
 dependencies = [
   "pytest>=8",
+  "hatch>=1.14",
   "pydantic>=2.5,<3",
   "mountainash @ {env:MOUNTAINASH_SOURCE_URI:{root:uri}/../mountainash}",
 ]
@@ -11,6 +12,7 @@ dependencies = [
 [envs.test.scripts]
 test-target-quick = "pytest {args}"
 test = "pytest tests"
+wheel-smoke = "python tests/support/wheel_smoke.py"
 
 [envs.ruff]
 python = "3.12"

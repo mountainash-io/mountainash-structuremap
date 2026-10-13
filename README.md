@@ -56,6 +56,13 @@ share their enclosing row's key; descendants attach to that row, not a fictitiou
 inline-record row. Table and row delivery order do not control reconstruction.
 Source instances and supplied tables are not mutated.
 
+Reconstruction requires the exact prepared table and column sets, including
+empty tables, and exactly one root row. It validates links, positions, null
+markers, active scalar cells and row reachability before calling any native
+constructor. A malformed later sibling or detached row cannot cause partial
+native construction. Exceptions raised by native constructors themselves retain
+their cause; the package cannot roll back those constructors' external effects.
+
 Recursive roles use finite table families, not a table per runtime depth.
 `_sm_parent_table` disambiguates links when a role can attach to multiple parent
 tables; singular recursive links have no position column. Traversal and native
@@ -130,7 +137,7 @@ preparation and execution errors use `StructureMapError`, with a code, owner,
 source path, remedy and applicable table/row/column location. Native constructor
 exceptions remain the chained cause.
 
-### Not delivered in this slice
+### Outside Foundation
 
 Variants, source-backed keys, lenient/unordered collections, shared tables, casts,
 presence preservation and other binding-specific strategies are not executable.
@@ -138,20 +145,21 @@ Preparation refuses those requests. The canonical definitions and policy
 declarations can describe more than this executor supports.
 
 XML/xsdata, native Pydantic/JSON bindings, decimal/lexical strategies, YAML/JSON
-authoring, Parquet output and incremental execution are separate work. This
-slice does not claim the complete Foundation or rebuild-programme contract.
+authoring, Parquet output and incremental execution are separate work.
+Foundation covers the plain-dataclass/in-memory contract, not the full rebuild programme.
 
 ## Development
 
-Requires Python 3.12+, Hatch and uv; canonical models use Pydantic 2.5+.
+Requires Python 3.12+ and Hatch; Hatch manages its configured uv installer.
+Canonical models use Pydantic 2.5+.
 Mountainash is a source dependency, not a package-index publication prerequisite.
 By default Hatch uses the sibling
 `../mountainash` checkout. Use a clean selected `develop` revision, not another
 session's working branch. Set `MOUNTAINASH_SOURCE_URI` to an absolute `file:` URI
 to use a different clean checkout or source extraction.
 
-The implementation checkpoint uses Mountainash revision
-`4a4991253fb629a2b9ede26f6f1cef12755109ef`. Its extraction must include
+Foundation qualification uses Mountainash revision
+`c98f35ace19562dac0612fdd9f6c580a59bdc5f8`. Its extraction must include
 `hatch.toml` as well as `pyproject.toml`, `src`, README and license, because
 Mountainash's build/version configuration lives in `hatch.toml`.
 
@@ -161,9 +169,23 @@ hatch run test:python examples/dataclass_roundtrip.py
 hatch run ruff:check
 hatch run mypy:check
 hatch build
+hatch run test:wheel-smoke
 ```
 
 The example prints emitted tables and reconstructs reordered delivery through
 a fresh preparation. No central documentation checkout is needed to build or
 run this package. Product work uses feature branches targeting protected
 `develop`; releases go through a release branch to `main`.
+
+The wheel smoke builds a new wheel and installs it with the selected Mountainash
+source into a temporary virtual environment. It checks installed-package imports,
+TypeSpecs and independently authored rows, then transfers primitive tables from
+a recursive writer to a separate reader process. Both run outside the checkout
+with Python isolated mode; only the copied fixture directory is added to their
+import paths. Temporary environments and transport files are removed afterward.
+
+CI runs `foundation-tests`, `foundation-wheel`, `foundation-lint` and
+`foundation-types`. Source, wheel and CI qualification use the same Mountainash
+revision. Private dependency checkout uses the organization secrets `CI_APP_ID`
+and `CI_APP_PRIVATE_KEY`; the app must have read-only contents access to
+`mountainash-io/mountainash`. No central documentation checkout is required.

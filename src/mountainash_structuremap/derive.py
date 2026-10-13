@@ -62,11 +62,21 @@ def derive(root_type: type[T], *, binding: str | None = None) -> DerivedModel[T]
                 scope = ModuleType(base.__module__)
                 scope.__annotations__ = annotations
                 module = sys.modules.get(base.__module__)
+                # Reuse known siblings in this lexical scope without leaking
+                # equal short names from unrelated modules or enclosing scopes.
+                lexical_scope = base.__qualname__.rpartition(".")[0]
+                known = {
+                    candidate.__name__: candidate
+                    for candidate in native.values()
+                    if lexical_scope
+                    and candidate.__module__ == base.__module__
+                    and candidate.__qualname__.rpartition(".")[0] == lexical_scope
+                }
                 hints.update(
                     get_type_hints(
                         scope,
                         globalns=vars(module) if module else {},
-                        localns={**vars(base), base.__name__: base},
+                        localns={**known, **vars(base), base.__name__: base},
                     )
                 )
         except Exception as exc:

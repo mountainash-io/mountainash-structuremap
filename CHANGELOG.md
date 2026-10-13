@@ -16,3 +16,6 @@
 - Validate native constructor signatures and reject unsupported mapping policies before reading values or calling constructors.
 - Keep anonymous collection levels transparent to named selectors, reserve container roles before recursive expansion, and preserve ordinary sibling role names during compilation.
 - Keep future cast declarations portable without introducing a separate dtype or expression vocabulary; require Pydantic 2.5+ for JSON-compatible declaration values.
+- Validate logical scalar activity and complete row reachability before native construction, including malformed later siblings and detached recursive components.
+- Add independent table acceptance, isolated installed-wheel/fresh-process reconstruction, and Foundation CI jobs pinned to one Mountainash development revision.
+- Resolve function-local mutual references through already known native classes in the same lexical scope without replacing declaring-class aliases.

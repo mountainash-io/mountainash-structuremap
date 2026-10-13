@@ -208,3 +208,18 @@ def test_recursive_records_inside_nested_containers_keep_finite_roles():
     prepared = prepare(derive(NestedNode))
     tables = decompose(value, prepared)
     assert reconstruct(tables, prepare(derive(NestedNode))) == value
+
+
+def test_function_local_mutual_recursion_resolves_the_known_root_class():
+    @dataclass
+    class Child:
+        parent: "Root | None"
+
+    @dataclass
+    class Root:
+        children: list[Child]
+
+    value = Root([Child(None), Child(Root([Child(None)]))])
+    prepared = prepare(derive(Root))
+    tables = decompose(value, prepared)
+    assert reconstruct(tables, prepare(derive(Root))) == value

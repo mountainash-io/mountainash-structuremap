@@ -7,23 +7,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SOURCE = (ROOT.parent / "mountainash").resolve().as_uri()
-SOURCE_URI = os.environ.get("MOUNTAINASH_SOURCE_URI", DEFAULT_SOURCE)
-SOURCE = urllib.parse.urlparse(SOURCE_URI)
-SOURCE_PATH = Path(urllib.parse.unquote(SOURCE.path))
-if (
-    SOURCE.scheme != "file"
-    or SOURCE.netloc not in ("", "localhost")
-    or SOURCE.query
-    or SOURCE.fragment
-    or not SOURCE_PATH.is_absolute()
-    or not SOURCE_PATH.is_dir()
-):
-    raise RuntimeError(f"MOUNTAINASH_SOURCE_URI must name an existing absolute local file URI: {SOURCE_URI}")
 
 
 def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> str:
@@ -53,8 +39,7 @@ def main() -> None:
         venv = temp / "venv"
         run([sys.executable, "-m", "venv", str(venv)], cwd=temp, env=clean_env)
         python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        run([str(python), "-m", "pip", "install", SOURCE_URI], cwd=temp, env=clean_env)
-        run([str(python), "-m", "pip", "install", "--no-deps", str(built[0])], cwd=temp, env=clean_env)
+        run([str(python), "-m", "pip", "install", str(built[0])], cwd=temp, env=clean_env)
         run([str(python), "-m", "pip", "check"], cwd=temp, env=clean_env)
 
         fixture = temp / "fixture"
@@ -64,7 +49,7 @@ def main() -> None:
         shutil.copy2(support / "runner.py", fixture / "runner.py")
         for mode in ("independent", "write", "read"):
             print(run([str(python), "-I", str(fixture / "runner.py"), mode], cwd=temp, env=clean_env))
-        print(f"installed-wheel smoke passed using Mountainash source {SOURCE_URI}")
+        print("Installed-wheel smoke passed using the wheel's declared pinned GitHub dependency")
 
 
 if __name__ == "__main__":

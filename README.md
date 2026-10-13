@@ -150,18 +150,18 @@ Foundation covers the plain-dataclass/in-memory contract, not the full rebuild p
 
 ## Development
 
-Requires Python 3.12+ and Hatch; Hatch manages its configured uv installer.
-Canonical models use Pydantic 2.5+.
-Mountainash is a source dependency, not a package-index publication prerequisite.
-By default Hatch uses the sibling
-`../mountainash` checkout. Use a clean selected `develop` revision, not another
-session's working branch. Set `MOUNTAINASH_SOURCE_URI` to an absolute `file:` URI
-to use a different clean checkout or source extraction.
+Requires Python 3.12+, Git and Hatch 1.14+; Hatch manages its configured uv
+installer. Canonical models use Pydantic 2.5+.
 
-Foundation qualification uses Mountainash revision
-`c98f35ace19562dac0612fdd9f6c580a59bdc5f8`. Its extraction must include
-`hatch.toml` as well as `pyproject.toml`, `src`, README and license, because
-Mountainash's build/version configuration lives in `hatch.toml`.
+Mountainash is sourced directly from GitHub at a pinned commit on `develop`:
+`c98f35ace19562dac0612fdd9f6c580a59bdc5f8`. The dependency in `pyproject.toml`
+is the single pin used by source environments, wheel installation and CI.
+No package-index publication or sibling checkout is required.
+
+Configure authenticated Git access to `mountainash-io/mountainash` before the
+first installation. For GitHub CLI users, `gh auth setup-git` configures Git to
+use the existing login. The built wheel retains the pinned GitHub dependency,
+so installing it also requires Git and read access to that repository.
 
 ```bash
 hatch run test:test
@@ -177,8 +177,8 @@ a fresh preparation. No central documentation checkout is needed to build or
 run this package. Product work uses feature branches targeting protected
 `develop`; releases go through a release branch to `main`.
 
-The wheel smoke builds a new wheel and installs it with the selected Mountainash
-source into a temporary virtual environment. It checks installed-package imports,
+The wheel smoke builds a new wheel and installs it with its declared dependencies
+into a temporary virtual environment. It checks installed-package imports,
 TypeSpecs and independently authored rows, then transfers primitive tables from
 a recursive writer to a separate reader process. Both run outside the checkout
 with Python isolated mode; only the copied fixture directory is added to their
@@ -186,6 +186,6 @@ import paths. Temporary environments and transport files are removed afterward.
 
 CI runs `foundation-tests`, `foundation-wheel`, `foundation-lint` and
 `foundation-types`. Source, wheel and CI qualification use the same Mountainash
-revision. Private dependency checkout uses the organization secrets `CI_APP_ID`
+revision. Private dependency fetches use the organization secrets `CI_APP_ID`
 and `CI_APP_PRIVATE_KEY`; the app must have read-only contents access to
 `mountainash-io/mountainash`. No central documentation checkout is required.

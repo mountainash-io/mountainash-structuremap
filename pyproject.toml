@@ -8,7 +8,13 @@ version = "0.1.0.dev0"
 description = "Declarative native-model and table transformations"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["mountainash", "pydantic>=2.5,<3"]
+dependencies = [
+  "mountainash @ git+https://github.com/mountainash-io/mountainash.git@c98f35ace19562dac0612fdd9f6c580a59bdc5f8",
+  "pydantic>=2.5,<3",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mountainash_structuremap"]

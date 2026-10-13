@@ -19,3 +19,4 @@
 - Validate logical scalar activity and complete row reachability before native construction, including malformed later siblings and detached recursive components.
 - Add independent table acceptance, isolated installed-wheel/fresh-process reconstruction, and Foundation CI jobs pinned to one Mountainash development revision.
 - Resolve function-local mutual references through already known native classes in the same lexical scope without replacing declaring-class aliases.
+- Source Mountainash directly from GitHub at the approved pinned development commit, shared by source environments, wheel metadata and authenticated CI installs.

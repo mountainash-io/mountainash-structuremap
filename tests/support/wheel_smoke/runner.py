@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from importlib.metadata import distribution
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -39,6 +40,9 @@ def installed_path() -> None:
     package = Path(mountainash_structuremap.__file__).resolve()
     assert package.is_relative_to(Path(sys.prefix).resolve()), package
     print(f"Installed package: {package}")
+    dependency_source = distribution("mountainash").read_text("direct_url.json")
+    assert dependency_source is not None
+    print(f"Mountainash commit: {json.loads(dependency_source)['vcs_info']['commit_id']}")
 
 
 def main(mode: str) -> None:

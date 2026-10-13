@@ -5,8 +5,6 @@ skip-install = false
 dependencies = [
   "pytest>=8",
   "hatch>=1.14",
-  "pydantic>=2.5,<3",
-  "mountainash @ {env:MOUNTAINASH_SOURCE_URI:{root:uri}/../mountainash}",
 ]
 
 [envs.test.scripts]
@@ -26,12 +24,8 @@ check = "ruff check src tests examples"
 [envs.mypy]
 python = "3.12"
 installer = "uv"
-skip-install = true
-dependencies = [
-  "mypy",
-  "pydantic>=2.5,<3",
-  "mountainash @ {env:MOUNTAINASH_SOURCE_URI:{root:uri}/../mountainash}",
-]
+skip-install = false
+dependencies = ["mypy"]
 
 [envs.mypy.scripts]
 check = "mypy src/mountainash_structuremap"

@@ -13,3 +13,15 @@ class NestedDocument:
 
     home: Address
     count: Count
+
+
+@dataclass
+class BaseAlias:
+    Value = int
+    value: Value
+
+
+@dataclass
+class DerivedAlias(BaseAlias):
+    Value = str
+    label: Value

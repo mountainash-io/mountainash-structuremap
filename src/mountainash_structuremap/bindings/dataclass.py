@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import Field, fields, is_dataclass
 from types import UnionType
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import Any, Literal, Tuple, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -146,7 +146,7 @@ def describe_annotation(
             key=describe_annotation(args[0], path, register),
             value=describe_annotation(args[1], path, register),
         )
-    if origin is tuple and args and args[-1] is not Ellipsis:
+    if origin is tuple and annotation is not Tuple and (not args or args[-1] is not Ellipsis):
         return Positional(items=tuple(describe_annotation(arg, path, register) for arg in args))
     raise StructureMapError(
         "unsupported_annotation",

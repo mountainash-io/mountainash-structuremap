@@ -23,6 +23,12 @@ class Document:
     people: list[Person]
 
 
+@dataclass
+class Node:
+    label: str
+    children: list["Node"] = field(default_factory=list)
+
+
 def main() -> None:
     source = Document(
         [
@@ -42,6 +48,15 @@ def main() -> None:
         ]
     )
     print("Reconstructed:", rebuilt)
+
+    tree = Node("root", [Node("branch", [Node("leaf")]), Node("sibling")])
+    recursive_tables = decompose(tree, prepare(derive(Node)))
+    print("Recursive tables:")
+    print(json.dumps(recursive_tables, indent=2))
+    recursive_delivery = {name: list(reversed(rows)) for name, rows in recursive_tables.items()}
+    rebuilt_tree = reconstruct(recursive_delivery, prepare(derive(Node)))
+    assert rebuilt_tree == Node("root", [Node("branch", [Node("leaf")]), Node("sibling")])
+    print("Reconstructed recursive object:", rebuilt_tree)
 
 
 if __name__ == "__main__":

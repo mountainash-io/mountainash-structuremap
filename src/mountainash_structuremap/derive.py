@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import MISSING
+from types import ModuleType
 from typing import Literal, TypeVar, get_type_hints
 
 from mountainash_structuremap.bindings.dataclass import describe_annotation, record_fields
@@ -44,20 +45,37 @@ def derive(root_type: type[T], *, binding: str | None = None) -> DerivedModel[T]
         native[name] = cls
         # Intern before descending so recursive references stay finite.
         definitions[name] = RecordDefinition(name=name, members=())
-        module = sys.modules.get(cls.__module__)
+        field_names = {item.name for item in declared_fields}
+        hints: dict[str, object] = {}
         try:
-            hints = get_type_hints(
-                cls,
-                globalns=vars(module) if module else {},
-                localns={**vars(cls), cls.__name__: cls},
-            )
+            for base in reversed(cls.__mro__):
+                annotations = {
+                    name: annotation
+                    for name, annotation in vars(base).get("__annotations__", {}).items()
+                    if name in field_names
+                }
+                if not annotations:
+                    continue
+                # A class call re-evaluates inherited hints in one supplied namespace.
+                # A module carrier resolves only this owner's declarations, without
+                # creating a native class or changing any application's globals.
+                scope = ModuleType(base.__module__)
+                scope.__annotations__ = annotations
+                module = sys.modules.get(base.__module__)
+                hints.update(
+                    get_type_hints(
+                        scope,
+                        globalns=vars(module) if module else {},
+                        localns={**vars(base), base.__name__: base},
+                    )
+                )
         except Exception as exc:
             raise StructureMapError(
                 "annotation_resolution_failed",
                 "Could not resolve dataclass annotations",
                 path=path,
                 owner="binding gap",
-                remedy="Make forward-referenced classes available in their declaring module",
+                remedy="Make forward-referenced classes available in their declaring module or class namespace",
             ) from exc
         members: list[Member] = []
         for item in declared_fields:

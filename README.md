@@ -35,9 +35,12 @@ the executor's retained schema.
 ## Supported behavior
 
 - Dataclass record roots; `str`, `bool`, signed-i64 `int` and `float` fields.
-- Nullable scalar fields, nonrecursive inline records and scalar/record lists.
-- Separate tables for collection uses, including lists inside list records.
-- Required empty records, all-null record occurrences, duplicate scalar members,
+- Nullable scalar fields, inline records, recursive dataclass links, lists,
+  string-key maps and fixed tuples (including empty tuples).
+- Separate tables for collection uses and recursive role families, including
+  nested collections and repeated uses of the same native class.
+- Required empty records, all-null record occurrences, empty nested containers,
+  null structured members, duplicate scalar members,
   empty strings and null scalar members.
 - Captured default values and factory output: preparation never calls factories,
   and reconstruction passes captured values to the ordinary native constructor.
@@ -52,6 +55,18 @@ Tables use `_sm_key`, `_sm_parent` and `_sm_position` by default. Inline records
 share their enclosing row's key; descendants attach to that row, not a fictitious
 inline-record row. Table and row delivery order do not control reconstruction.
 Source instances and supplied tables are not mutated.
+
+Recursive roles use finite table families, not a table per runtime depth.
+`_sm_parent_table` disambiguates links when a role can attach to multiple parent
+tables; singular recursive links have no position column. Traversal and native
+construction use explicit stacks. Repeated use of one source object produces
+independent occurrences; an actual containment cycle fails.
+
+Nested collection tables append `__item`. Maps carry `_sm_map_key` and positions
+to preserve insertion order, including empty keys and keys containing `/`.
+Nullable structured collection members carry `_sm_null`: a true marker means
+null, while false preserves present empty/all-null members. Contradictory null
+rows with populated payload or descendants are rejected.
 
 ### Native boundary and normalization
 
@@ -77,10 +92,9 @@ exceptions remain the chained cause.
 
 ### Not delivered in this slice
 
-Recursive execution, directly nested collections, maps, fixed tuples, nullable
-structured collection members, variant execution, per-use overrides and the
-remaining mapping policies are not available. Preparation refuses these requests.
-The canonical definitions can describe more shapes than this executor supports.
+Variant execution, per-use overrides and the remaining mapping policies are not
+available. Preparation refuses these requests. The canonical definitions can
+describe more shapes than this executor supports.
 
 XML/xsdata, native Pydantic/JSON bindings, decimal/lexical strategies, YAML/JSON
 authoring, Parquet output and incremental execution are separate work. This

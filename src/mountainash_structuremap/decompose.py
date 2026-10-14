@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import TypeVar, cast
+from typing import TypeVar
 
+from mountainash_structuremap.codecs import Cell
 from mountainash_structuremap.errors import StructureMapError
 from mountainash_structuremap.prepared import (
-    Cell,
     LinkProgram,
     MapProgram,
     PreparedMapping,
@@ -17,7 +17,6 @@ from mountainash_structuremap.prepared import (
 _I64_MIN = -(2**63)
 _I64_MAX = 2**63 - 1
 T = TypeVar("T")
-_PYTHON_TYPES = {"str": str, "int": int, "float": float, "bool": bool}
 _Task = tuple[str, int, object, dict[str, Cell], str, str, int, str | None]
 
 
@@ -25,32 +24,15 @@ def _data_error(code: str, message: str, *, path: str, remedy: str) -> Structure
     return StructureMapError(code, message, path=path, owner="executor restriction", remedy=remedy)
 
 
-def _native_scalar(value: object, program: ScalarProgram) -> Cell:
+def _native_scalar(value: object, program: ScalarProgram) -> tuple[Cell, ...]:
     if value is None:
         if program.nullable:
-            return None
+            return tuple(None for _ in program.codec.fields)
         raise _data_error(
-            "null_not_allowed",
-            "Non-nullable scalar has a null value",
-            path=program.path,
+            "null_not_allowed", "Non-nullable scalar has a null value", path=program.path,
             remedy="Supply a value or declare the member nullable",
         )
-    expected = _PYTHON_TYPES[program.scalar_type]
-    if type(value) is not expected:
-        raise _data_error(
-            "native_type_mismatch",
-            f"Expected {expected.__name__}, got {type(value).__name__}",
-            path=program.path,
-            remedy=f"Supply a native {expected.__name__} value",
-        )
-    if isinstance(value, int) and not _I64_MIN <= value <= _I64_MAX:
-        raise _data_error(
-            "value_out_of_range",
-            "Integer does not fit signed i64",
-            path=program.path,
-            remedy="Supply an integer in the signed i64 range",
-        )
-    return cast(Cell, value)
+    return program.codec.encode(value)
 
 
 def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str, Cell]]]:
@@ -102,7 +84,8 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
         while pending:
             current = prepared.programs[pending.pop()]
             if isinstance(current, ScalarProgram):
-                row[current.column] = None
+                for field in current.codec.fields:
+                    row[field.name] = None
             elif isinstance(current, RecordProgram):
                 pending.extend(child for _, child in reversed(current.members))
             elif isinstance(current, TupleProgram):
@@ -154,7 +137,8 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
             stack.append(("value", member_plan._program, native_value, child_row, child_key, edge.table, -1, None))
             continue
         if isinstance(program, ScalarProgram):
-            row[program.column] = _native_scalar(native_value, program)
+            values = _native_scalar(native_value, program)
+            row.update((field.name, cell) for field, cell in zip(program.codec.fields, values, strict=True))
             continue
         if isinstance(program, RecordProgram):
             if native_value is None:
@@ -173,7 +157,7 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
             children: list[tuple[int, object]] = []
             for member, child_id in program.members:
                 child = prepared.programs[child_id]
-                children.append((child_id, prepared.binding.read(native_value, member, path=child.path)))
+                children.append((child_id, prepared.record_adapters[program.definition].read(native_value, member, path=child.path)))
             for child_id, child_value in reversed(children):
                 stack.append(("value", child_id, child_value, row, row_key, row_table, -1, None))
             continue
@@ -212,9 +196,11 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
                 )
             entries: list[tuple[str | None, object]]
             if isinstance(program, SequenceProgram):
-                if not isinstance(native_value, list):
+                container_type = tuple if program.container == "tuple" else list
+                if not isinstance(native_value, container_type):
                     raise _data_error(
-                        "native_shape_mismatch", "Expected a list", path=program.path, remedy="Supply a list"
+                        "native_shape_mismatch", f"Expected a {program.container}", path=program.path,
+                        remedy=f"Supply a {program.container}",
                     )
                 entries = [(None, item) for item in native_value]
             else:

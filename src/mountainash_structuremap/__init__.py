@@ -2,6 +2,7 @@
 
 from mountainash_structuremap.decompose import decompose
 from mountainash_structuremap.derive import derive
+from mountainash_structuremap.documents import parse, serialize
 from mountainash_structuremap.errors import StructureMapError
 from mountainash_structuremap.mapping import MappingSpec, Naming, UseOverride
 from mountainash_structuremap.prepare import prepare
@@ -15,5 +16,7 @@ __all__ = [
     "decompose",
     "derive",
     "prepare",
+    "parse",
+    "serialize",
     "reconstruct",
 ]

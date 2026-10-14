@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add optional xsdata 26.2 XML model derivation and native `parse`/`serialize` operations, including XML local-name collision guidance, wrappers, token lists and enum reconstruction.
+- Move record preparation and scalar conversion into native bindings while retaining the shared finite compiler/executor and complete preconstruction validation.
+- Reject unsupported same-type XML compound metadata before reading data; retain native exceptions and explicit capability/install guidance.
+- Preserve tuple-backed XML collections, repeated nil occurrences and NaN-valued enum selection; retain nested XML detection and reject non-record enum roots with attributed errors.
+- Use the owner-authorized native Unicode stream entrypoint with xsdata's standard-library handler, preserving text with non-UTF-8 declarations while keeping byte parsing unchanged; track the native `from_string` defect in issue #4.
+
 - Add the plain-dataclass in-memory `derive`, `prepare`, `decompose` and `reconstruct` pipeline with prepared Mountainash TypeSpecs.
 - Preserve inline records, scalar/record list membership, null and empty scalar values, duplicate members, required empty records and captured default-factory output.
 - Attach collection descendants to their actual enclosing row, including optional inline records whose presence is established by descendants.

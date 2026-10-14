@@ -13,7 +13,25 @@ class Declaration(BaseModel):
 
 class Scalar(Declaration):
     kind: Literal["scalar"] = "scalar"
-    type: Literal["str", "int", "float", "bool"]
+    type: Literal[
+        "str", "int", "float", "bool", "decimal", "date", "time", "datetime",
+        "duration", "period", "binary", "qname", "enum"
+    ]
+    native_type: str | None = None
+
+
+class XmlField(Declaration):
+    kind: str
+    name: str | None = None
+    namespace: str | None = None
+    wrapper: str | None = None
+    wrapper_namespace: str | None = None
+    nillable: bool = False
+    tokens: bool = False
+    mixed: bool = False
+    sequence: int | None = None
+    format: str | None = None
+    process_contents: str | None = None
 
 
 class RecordRef(Declaration):
@@ -24,6 +42,7 @@ class RecordRef(Declaration):
 class Sequence(Declaration):
     kind: Literal["sequence"] = "sequence"
     item: Shape
+    container: Literal["list", "tuple"] = "list"
 
 
 class Map(Declaration):
@@ -56,6 +75,7 @@ class Member(Declaration):
     name: str
     shape: Shape
     default_kind: Literal["required", "value", "factory"] = "required"
+    xml: XmlField | None = None
 
 
 class RecordDefinition(Declaration):
@@ -87,4 +107,6 @@ __all__ = [
     "Sequence",
     "Shape",
     "StructureSpec",
+    "XmlField",
 ]
+

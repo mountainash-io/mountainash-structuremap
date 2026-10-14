@@ -1,6 +1,6 @@
 # Mountainash StructureMap
 
-Transform a plain Python dataclass instance into typed in-memory tables and reconstruct it independently.
+Transform native Python dataclass and xsdata XML models into typed in-memory tables and reconstruct them independently.
 
 ## Example
 
@@ -111,7 +111,58 @@ Explicit generated keys, strict positions, ordered collections, separate tables,
 and normalized presence select the implemented policies. Known later strategies
 are declarable but fail during preparation rather than being silently ignored.
 Canonical strategy types live in `mountainash_structuremap.mapping`; these
-declarations do not supply casts, alternate bindings or wire execution.
+declarations do not by themselves supply casts or additional binding capabilities.
+
+### XML documents
+
+Install `mountainash-structuremap[xml]` for the xsdata 26.2 binding. XML-shaped
+dataclasses select it automatically; `derive(Model, binding="xsdata")` selects
+it explicitly. Missing XML dependencies fail with installation guidance rather
+than falling back to a plain dataclass interpretation.
+
+```python
+from mountainash_structuremap import parse, serialize
+
+prepared = prepare(derive(XmlDocument))
+native = parse(xml_text_or_bytes, prepared)
+tables = decompose(native, prepared)
+rebuilt = reconstruct(tables, prepare(derive(XmlDocument)))
+xml_text = serialize(rebuilt, prepared)
+```
+
+`parse` accepts complete XML text or bytes, not filenames or streams.
+`serialize` returns XML text. Both use xsdata; prefixes and byte-identical output
+are not preserved. Run `hatch run test:python examples/xml_roundtrip.py` for a
+complete native-document and independently authored table example.
+
+Unicode text uses xsdata's native stream entrypoint with `StringIO`; bytes retain
+their declared encoding through `from_bytes`. The standard-library
+`XmlEventHandler` is selected explicitly, independent of whether lxml is installed.
+This avoids xsdata 26.2's `from_string` re-encoding defect, tracked separately in
+[issue #4](https://github.com/mountainash-io/mountainash-structuremap/issues/4).
+
+The current XML slice supports primitive and primitive-valued enum fields,
+nullable values, inline/empty records, repeated elements, token collections and
+wrappers. Native list/tuple containers and repeated nil members retain their
+occurrences; nil members do not make an empty required collection null.
+It retains XML names, namespaces and element/attribute/text kinds.
+Columns default to XML local names; same-local-name collisions require explicit
+`column` overrides addressed by native attribute paths. Overrides change table
+layout, not native XML names. XML integers use canonical decimal strings instead
+of silently narrowing to signed i64; Python's configured integer-to-decimal
+conversion limit still applies.
+
+Preparation invokes neither native constructors nor default factories.
+Reconstruction restores captured values after validating all table input.
+Parsing and serialization retain xsdata's native normalization: for example,
+an empty optional string with a `None` default can parse as `None`. This is not
+source-presence tracking or full XSD validation. Converter failures and native
+constructor/parser/serializer failures retain their causes.
+
+Compound choices with overlapping Python types that xsdata cannot bind fail
+during derivation/preparation, naming the field and conflicting alternatives.
+Use distinct native intermediate types/subclasses supported by xsdata; differing
+QNames or `DerivedElement` do not remove that native limitation.
 
 ### Native boundary and normalization
 
@@ -137,16 +188,17 @@ preparation and execution errors use `StructureMapError`, with a code, owner,
 source path, remedy and applicable table/row/column location. Native constructor
 exceptions remain the chained cause.
 
-### Outside Foundation
+### Not yet executable
 
 Variants, source-backed keys, lenient/unordered collections, shared tables, casts,
 presence preservation and other binding-specific strategies are not executable.
 Preparation refuses those requests. The canonical definitions and policy
 declarations can describe more than this executor supports.
 
-XML/xsdata, native Pydantic/JSON bindings, decimal/lexical strategies, YAML/JSON
-authoring, Parquet output and incremental execution are separate work.
-Foundation covers the plain-dataclass/in-memory contract, not the full rebuild programme.
+XML variants, wildcard/mixed fragments, numeric facets and temporal codecs remain
+later Phase 2 work. Native Pydantic/JSON bindings, general lexical/value-space
+policies, YAML/JSON authoring, Parquet output and incremental execution are
+separate work. The current XML slice is not complete Phase 2 qualification.
 
 ## Development
 
@@ -166,6 +218,7 @@ so installing it also requires Git and read access to that repository.
 ```bash
 hatch run test:test
 hatch run test:python examples/dataclass_roundtrip.py
+hatch run test:python examples/xml_roundtrip.py
 hatch run ruff:check
 hatch run mypy:check
 hatch build

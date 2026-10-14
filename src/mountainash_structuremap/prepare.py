@@ -8,7 +8,8 @@ from typing import Literal, TypeVar, cast
 from mountainash.typespec.spec import FieldSpec, TypeSpec
 from mountainash.typespec.universal_types import UniversalType
 
-from mountainash_structuremap.bindings.dataclass import DataclassBinding, validate_constructor
+from mountainash_structuremap.bindings.contracts import RecordAdapter
+from mountainash_structuremap.bindings.selection import select_binding
 from mountainash_structuremap.definitions import (
     DerivedModel,
     Map,
@@ -34,13 +35,6 @@ from mountainash_structuremap.prepared import (
 )
 
 T = TypeVar("T")
-_TYPES = {
-    "str": UniversalType.STRING,
-    "int": UniversalType.INTEGER,
-    "float": UniversalType.NUMBER,
-    "bool": UniversalType.BOOLEAN,
-}
-
 
 def _snake(value: str) -> str:
     value = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", value)
@@ -106,7 +100,7 @@ def _components(model: DerivedModel[object]) -> dict[str, int]:
 def _program_fields(program_id: int, programs: dict[int, ValueProgram]) -> list[FieldSpec]:
     program = programs[program_id]
     if isinstance(program, ScalarProgram):
-        return [FieldSpec(name=program.column, type=_TYPES[program.scalar_type], missing_values=[])]
+        return list(program.codec.fields)
     if isinstance(program, RecordProgram):
         return [field for _, child in program.members for field in _program_fields(child, programs)]
     if isinstance(program, TupleProgram):
@@ -117,7 +111,7 @@ def _program_fields(program_id: int, programs: dict[int, ValueProgram]) -> list[
 def _program_scalar_paths(program_id: int, programs: dict[int, ValueProgram]) -> list[tuple[str, str]]:
     program = programs[program_id]
     if isinstance(program, ScalarProgram):
-        return [(program.column, program.path)]
+        return [(field.name, program.path) for field in program.codec.fields]
     if isinstance(program, RecordProgram):
         return [item for _, child in program.members for item in _program_scalar_paths(child, programs)]
     if isinstance(program, TupleProgram):
@@ -147,12 +141,14 @@ def prepare(
             "Requested mapping binding differs from derivation",
             remedy="Derive and prepare with the same binding",
         )
+    native_binding = select_binding(model.native_types[model.structure.root], model.binding)
+    record_adapters: dict[str, RecordAdapter] = {}
     if validate_native:
         raise StructureMapError(
             "unavailable_capability",
-            "The dataclass binding does not provide native validation",
+            f"The {model.binding} binding does not provide native validation",
             owner="binding gap",
-            remedy="Set validate_native=False; ordinary dataclass construction does not provide native validation",
+            remedy=f"Set validate_native=False; the {model.binding} binding does not provide native validation",
         )
     if mapping.defaults.presence != "normalize" or mapping.defaults.positions != "strict":
         path = "presence" if mapping.defaults.presence != "normalize" else "positions"
@@ -373,10 +369,11 @@ def prepare(
         nullable: bool = False,
         destination: int | None = None,
     ) -> int:
+        if definition not in record_adapters:
+            record_adapters[definition] = native_binding.prepare_record(
+                model.native_types[definition], model.structure.definitions[definition], path=authored_path
+            )
         members = model.structure.definitions[definition].members
-        validate_constructor(
-            model.native_types[definition], tuple(member.name for member in members), path=authored_path
-        )
         children = tuple(
             (
                 member.name,
@@ -384,11 +381,12 @@ def prepare(
                     member.shape,
                     join(path, member.name),
                     join(authored_path, member.name),
-                    "_".join(filter(None, (prefix, norm(member.name)))),
+                    "_".join(filter(None, (prefix, norm(member.xml.name if member.xml and member.xml.name else member.name)))),
                     family=family,
                     owner=owner,
                     source_definition=definition,
                     relative_path=member.name,
+                    format=member.xml.format if member.xml else None,
                 ),
             )
             for member in members
@@ -492,6 +490,7 @@ def prepare(
         owner: str,
         source_definition: str,
         relative_path: str,
+        format: str | None = None,
         anonymous_parent: str | None = None,
         destination: int | None = None,
     ) -> int:
@@ -500,7 +499,12 @@ def prepare(
         override = mapping.overrides.get(authored_path)
         if isinstance(value_shape, Scalar):
             scalar_column = override.column if override is not None and override.column is not None else column
-            return emit(ScalarProgram(authored_path, scalar_column, value_shape.type, nullable), destination)
+            native_type = model.native_types.get(value_shape.native_type) if value_shape.native_type else None
+            codec = native_binding.prepare_scalar(
+                value_shape, native_type=native_type, format=format, column=scalar_column,
+                policy=None, path=authored_path,
+            )
+            return emit(ScalarProgram(authored_path, codec, nullable), destination)
         if isinstance(value_shape, RecordRef):
             if recursive_component[source_definition] == recursive_component[value_shape.definition]:
                 table = row_table(
@@ -557,8 +561,8 @@ def prepare(
             )
             edge: ValueProgram = (
                 MapProgram(authored_path, table, nullable)
-                if kind == "map"
-                else SequenceProgram(authored_path, table, nullable)
+                if isinstance(value_shape, Map)
+                else SequenceProgram(authored_path, table, nullable, value_shape.container)
             )
             return emit(edge, destination)
         if isinstance(value_shape, Positional):
@@ -656,7 +660,6 @@ def prepare(
             _kind=cast(Literal["root", "single", "sequence", "map"], kind),
             _nullable_member=cast(bool, descriptor["nullable_member"]),
         )
-    native_binding = DataclassBinding()
     return PreparedMapping(
         root=root_id,
         programs=programs,
@@ -665,6 +668,7 @@ def prepare(
         tables=plans,
         native_types=model.native_types,
         binding=native_binding,
+        record_adapters=record_adapters,
         capabilities=native_binding.capabilities,
         key_column=key_col,
         parent_column=parent_col,

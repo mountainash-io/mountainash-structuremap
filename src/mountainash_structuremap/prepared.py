@@ -7,17 +7,16 @@ from typing import Generic, Literal, Mapping, TypeVar
 
 from mountainash.typespec.spec import TypeSpec
 
-from mountainash_structuremap.bindings.contracts import CapabilityReport, DataclassBinding
+from mountainash_structuremap.bindings.contracts import CapabilityReport, NativeBinding, RecordAdapter
+from mountainash_structuremap.codecs import ScalarCodec
 
-Cell = str | int | float | bool | None
 T = TypeVar("T")
 
 
 @dataclass(frozen=True)
 class ScalarProgram:
     path: str
-    column: str
-    scalar_type: Literal["str", "int", "float", "bool"]
+    codec: ScalarCodec
     nullable: bool = False
 
 
@@ -34,6 +33,7 @@ class SequenceProgram:
     path: str
     table: str
     nullable: bool = False
+    container: Literal["list", "tuple"] = "list"
 
 
 @dataclass(frozen=True)
@@ -84,8 +84,9 @@ class PreparedMapping(Generic[T]):
     root_type: type[T]
     tables: Mapping[str, TablePlan]
     native_types: Mapping[str, type]
-    binding: DataclassBinding
+    binding: NativeBinding
     capabilities: CapabilityReport
+    record_adapters: Mapping[str, RecordAdapter]
     key_column: str
     parent_column: str
     position_column: str
@@ -97,3 +98,4 @@ class PreparedMapping(Generic[T]):
         object.__setattr__(self, "programs", MappingProxyType(dict(self.programs)))
         object.__setattr__(self, "tables", MappingProxyType(dict(self.tables)))
         object.__setattr__(self, "native_types", MappingProxyType(dict(self.native_types)))
+        object.__setattr__(self, "record_adapters", MappingProxyType(dict(self.record_adapters)))

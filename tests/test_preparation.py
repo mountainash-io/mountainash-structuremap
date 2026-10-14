@@ -244,9 +244,6 @@ def test_unrelated_metadata_and_explicit_plain_binding_do_not_claim_xml():
 
     plain = prepare(derive(Plain))
     assert reconstruct(decompose(Plain("x"), plain), plain) == Plain("x")
-    with pytest.raises(StructureMapError) as caught:
-        derive(Marked)
-    assert caught.value.code == "unavailable_binding"
     explicit = prepare(derive(Marked, binding="dataclass"))
     assert reconstruct(decompose(Marked("x"), explicit), explicit) == Marked("x")
 

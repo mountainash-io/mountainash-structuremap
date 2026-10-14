@@ -6,9 +6,9 @@ from typing import TypeVar, cast
 
 import mountainash as ma
 
+from mountainash_structuremap.codecs import Cell, CellLocation
 from mountainash_structuremap.errors import StructureMapError
 from mountainash_structuremap.prepared import (
-    Cell,
     LinkProgram,
     MapProgram,
     PreparedMapping,
@@ -22,7 +22,6 @@ from mountainash_structuremap.prepared import (
 _I64_MIN = -(2**63)
 _I64_MAX = 2**63 - 1
 T = TypeVar("T")
-_PYTHON_TYPES = {"str": str, "int": int, "float": float, "bool": bool}
 _EvalTask = tuple[str, int, Mapping[str, Cell], str, int, object]
 
 
@@ -49,46 +48,22 @@ def _error(
 
 
 def _scalar_cell(
-    value: object,
+    row: Mapping[str, Cell],
     program: ScalarProgram,
     *,
     table: str,
     row_number: int,
-) -> Cell:
-    if value is None:
+) -> object:
+    fields = program.codec.fields
+    cells = tuple(row.get(field.name) for field in fields)
+    if all(value is None for value in cells):
         if program.nullable:
             return None
-        raise _error(
-            "null_not_allowed",
-            "Non-nullable scalar cell is null",
-            path=program.path,
-            remedy="Supply a value or declare the member nullable",
-            table=table,
-            row=row_number,
-            column=program.column,
-        )
-    expected = _PYTHON_TYPES[program.scalar_type]
-    if type(value) is not expected:
-        raise _error(
-            "cell_type_mismatch",
-            f"Expected {expected.__name__}, got {type(value).__name__}",
-            path=program.path,
-            remedy=f"Supply a {expected.__name__} cell",
-            table=table,
-            row=row_number,
-            column=program.column,
-        )
-    if isinstance(value, int) and not _I64_MIN <= value <= _I64_MAX:
-        raise _error(
-            "value_out_of_range",
-            "Integer does not fit signed i64",
-            path=program.path,
-            remedy="Supply an integer in the signed i64 range",
-            table=table,
-            row=row_number,
-            column=program.column,
-        )
-    return cast(Cell, value)
+        raise _error("null_not_allowed", "Non-nullable scalar cell is null", path=program.path,
+                     remedy="Supply a value or declare the member nullable", table=table,
+                     row=row_number, column=fields[0].name)
+    return program.codec.check(cells, CellLocation(path=program.path, table=table, row=row_number,
+                                                   column=fields[0].name))
 
 
 def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: PreparedMapping[T]) -> T:
@@ -330,7 +305,7 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
         while pending:
             program = prepared.programs[pending.pop()]
             if isinstance(program, ScalarProgram):
-                if row[program.column] is not None:
+                if any(row[field.name] is not None for field in program.codec.fields):
                     return False
             elif isinstance(program, RecordProgram):
                 pending.extend(child for _, child in reversed(program.members))
@@ -395,6 +370,7 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
     # Validate logical activity and reachability before any native constructor.
     # This walk uses row references, not a materialized native-value tree.
     consumed: set[tuple[str, str]] = set()
+    checked_scalars: dict[tuple[int, str, str], object] = {}
     validation: list[tuple[int, Mapping[str, Cell], str, int]] = [(prepared.root, root_row, prepared.root_table, 0)]
     while validation:
         value_id, value_row, value_table, value_number = validation.pop()
@@ -405,7 +381,9 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
         if value_plan._nullable_member and value_row[prepared.null_column] is True:
             continue
         if isinstance(value_program, ScalarProgram):
-            _scalar_cell(value_row[value_program.column], value_program, table=value_table, row_number=value_number)
+            checked_scalars[(value_id, value_table, value_key)] = _scalar_cell(
+                value_row, value_program, table=value_table, row_number=value_number
+            )
         elif isinstance(value_program, (RecordProgram, TupleProgram)):
             if value_program.nullable and no_content(value_id, value_row, value_table, value_key):
                 continue
@@ -501,8 +479,8 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                 ) from exc
             # Constructor argument order is irrelevant; child evaluation order remains declared order.
             try:
-                constructed = prepared.binding.construct(
-                    native, record_values, path=cast(RecordProgram, prepared.programs[program_id]).path
+                constructed = prepared.record_adapters[cast(RecordProgram, prepared.programs[program_id]).definition].construct(
+                    record_values, path=cast(RecordProgram, prepared.programs[program_id]).path
                 )
             except StructureMapError as exc:
                 if exc.code == "native_construct_failed":
@@ -523,7 +501,8 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
             values = results[-count:] if count else []
             if count:
                 del results[-count:]
-            results.append(values)
+            sequence = cast(SequenceProgram, prepared.programs[program_id])
+            results.append(tuple(values) if sequence.container == "tuple" else values)
             continue
         if op == "finish_map":
             count, keys = cast(tuple[int, tuple[str, ...]], extra)
@@ -541,7 +520,8 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                 continue
 
         if isinstance(program, ScalarProgram):
-            results.append(row[program.column])
+            checked = checked_scalars[(program_id, row_table, key)]
+            results.append(None if checked is None else program.codec.decode(checked))
             continue
         if isinstance(program, RecordProgram):
             if program.nullable and no_content(program_id, row, row_table, key):

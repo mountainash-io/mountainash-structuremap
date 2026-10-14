@@ -210,3 +210,19 @@ def test_independent_recorded_variants_rebuild_native_classes_in_position_order(
     result = reconstruct(rows, prepared)
     assert [type(pet) for pet in result.pets] == [Cat, Dog]
     assert [(pet.kind, pet.name) for pet in result.pets] == [("CAT", "earlier"), ("DOG", "later")]
+
+
+class AnnotatedChoice(BaseModel):
+    value: Annotated[int, Field(gt=0)] | Annotated[str, Field(min_length=1)]
+
+
+@pytest.mark.parametrize("value,native_type,key", [(7, int, "int"), ("text", str, "str")])
+def test_individually_annotated_branches_keep_distinct_native_associations(value, native_type, key):
+    prepared = prepare(derive(AnnotatedChoice), MappingSpec(overrides={"value": UseOverride(
+        discriminator={"strategy": "recorded", "column": "kind", "values": {"int": "int", "str": "str"}},
+    )}))
+    row = {"_sm_key": "external", "kind": key, "int_value": None, "str_value": None}
+    row[f"{key}_value"] = value
+    result = reconstruct({"root": [row]}, prepared)
+    assert type(result.value) is native_type
+    assert result.value == value

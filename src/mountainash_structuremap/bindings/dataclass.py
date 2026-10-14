@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import MISSING, Field, fields, is_dataclass
 from inspect import signature
 from types import ModuleType, UnionType
-from typing import Annotated, Any, Literal, Tuple, Union, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, ForwardRef, Literal, Tuple, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
 
@@ -38,7 +38,10 @@ class DataclassBinding:
     name = "dataclass"
     capabilities = CapabilityReport()
 
-    def describe_record(self, cls: type, register: Callable[[type, str], str], *, path: str) -> RecordDefinition:
+    def describe_record(
+        self, cls: type, register: Callable[[type, str], str], *, path: str,
+        record_predicate: Callable[[type], bool] = is_dataclass,
+    ) -> RecordDefinition:
         if issubclass(cls, BaseModel):
             raise StructureMapError(
                 "unavailable_binding", "This class requires the Pydantic binding", path=path,
@@ -73,7 +76,7 @@ class DataclassBinding:
                 "factory" if item.default_factory is not MISSING else "value" if item.default is not MISSING else "required"
             )
             members.append(Member(name=item.name, shape=describe_annotation(hints[item.name], member_path, register,
-                                                                              record_predicate=lambda value: is_dataclass(value)), 
+                                                                              record_predicate=record_predicate),
                                   default_kind=default))
         return RecordDefinition(name=f"{cls.__module__}.{cls.__qualname__}", members=tuple(members))
 
@@ -231,6 +234,12 @@ def validate_constructor(cls: type, member_names: tuple[str, ...], *, path: str)
             remedy="Use a constructor accepting the mapped field keywords, with defaults for constructor-only arguments",
         ) from exc
 
+def _unwrap_annotated(annotation: Any) -> Any:
+    while get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    return annotation
+
+
 def describe_annotation(
     annotation: object,
     path: str,
@@ -239,8 +248,13 @@ def describe_annotation(
     record_predicate: Callable[[type], bool] = is_dataclass,
     allow_literals: bool = False,
 ) -> Shape:
-    while get_origin(annotation) is Annotated:
-        annotation = get_args(annotation)[0]
+    annotation = _unwrap_annotated(annotation)
+    if isinstance(annotation, (str, ForwardRef)):
+        raise StructureMapError(
+            "annotation_resolution_failed", "Native field annotation is unresolved",
+            path=path, owner="binding gap",
+            remedy="Resolve forward references or rebuild the native model before derivation",
+        )
     origin, args = get_origin(annotation), get_args(annotation)
     if origin is Literal and allow_literals and args:
         literal_type = type(args[0])
@@ -251,14 +265,16 @@ def describe_annotation(
     if isinstance(annotation, type) and record_predicate(annotation):
         return RecordRef(definition=register(annotation, path))
     if origin in (Union, UnionType):
-        choice_types = tuple(arg for arg in args if arg is not type(None))
-        choices = tuple(
-            Alternative(key=arg.__name__, shape=describe_annotation(
+        choices: list[Alternative] = []
+        for arg in args:
+            if arg is type(None):
+                continue
+            arg = _unwrap_annotated(arg)
+            branch = describe_annotation(
                 arg, path, register, record_predicate=record_predicate, allow_literals=allow_literals,
-            ))
-            for arg in choice_types
-        )
-        shape: Shape = choices[0].shape if len(choices) == 1 else Alternatives(choices=choices)
+            )
+            choices.append(Alternative(key=arg.__name__, shape=branch))
+        shape: Shape = choices[0].shape if len(choices) == 1 else Alternatives(choices=tuple(choices))
         return Nullable(value=shape) if type(None) in args else shape
     if origin is list and len(args) == 1:
         return Sequence(item=describe_annotation(

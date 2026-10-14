@@ -4,6 +4,20 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class PydanticEntry(BaseModel):
+    model_config = ConfigDict(serialize_by_alias=True)
+    code: str = Field(alias="entry-code")
+    amount: int = Field(alias="total", gt=0)
+
+
+class PydanticCatalog(BaseModel):
+    model_config = ConfigDict(serialize_by_alias=True)
+    entries: list[PydanticEntry] = Field(alias="records")
+
+
 if TYPE_CHECKING:
     from xsdata.models.datatype import XmlDate, XmlDateTime, XmlTime
 

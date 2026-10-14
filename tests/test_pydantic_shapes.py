@@ -3,7 +3,7 @@ from datetime import date
 from typing import Annotated, ForwardRef, Literal
 
 import pytest
-from pydantic import BaseModel, Field, RootModel, ValidationError
+from pydantic import BaseModel, Field, RootModel, ValidationError, create_model
 
 from mountainash_structuremap import StructureMapError, decompose, derive, prepare, reconstruct
 
@@ -133,3 +133,18 @@ def test_annotated_container_constraints_are_enforced_by_native_construction():
     error = caught.value.__cause__.errors()[0]
     assert error["loc"] == ("items", 0)
     assert error["type"] == "greater_than_equal"
+
+
+@pytest.mark.parametrize("annotation", [
+    ForwardRef("UndefinedShapeClass") | None,
+    list[ForwardRef("UndefinedShapeClass")],
+    dict[str, ForwardRef("UndefinedShapeClass")],
+    tuple[int, ForwardRef("UndefinedShapeClass")],
+])
+def test_unresolved_nested_annotations_keep_member_attribution(annotation):
+    model = create_model("UnresolvedNested", child=(annotation, ...))
+    with pytest.raises(StructureMapError) as caught:
+        derive(model)
+    assert caught.value.code == "annotation_resolution_failed"
+    assert caught.value.path == "child"
+    assert "rebuild" in caught.value.remedy

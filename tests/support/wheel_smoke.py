@@ -22,13 +22,42 @@ def run(command: list[str], *, cwd: Path, env: dict[str, str]) -> str:
     return result.stdout.strip()
 
 
-def install(wheel: Path, temp: Path, *, extra: bool) -> Path:
-    venv = temp / ("xml-venv" if extra else "base-venv")
+def install(
+    wheel: Path, temp: Path, *, extra: bool, pydantic_constraint: str | None = None
+) -> Path:
+    environment = (
+        f"pydantic-{pydantic_constraint.replace('=', '').replace('<', '').replace('>', '')}-venv"
+        if pydantic_constraint
+        else ("xml-venv" if extra else "base-venv")
+    )
+    venv = temp / environment
     run([sys.executable, "-m", "venv", str(venv)], cwd=temp, env=CLEAN_ENV)
     python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     requirement = f"{wheel}[xml]" if extra else str(wheel)
-    run([str(python), "-m", "pip", "install", requirement], cwd=temp, env=CLEAN_ENV)
+    requirements = [requirement]
+    if pydantic_constraint:
+        requirements.append(f"pydantic{pydantic_constraint}")
+    run([str(python), "-m", "pip", "install", *requirements], cwd=temp, env=CLEAN_ENV)
     run([str(python), "-m", "pip", "check"], cwd=temp, env=CLEAN_ENV)
+    print(
+        run(
+            [
+                str(python),
+                "-c",
+                "from importlib.metadata import PackageNotFoundError, version\n"
+                "def installed(name):\n"
+                "    try:\n"
+                "        return version(name)\n"
+                "    except PackageNotFoundError:\n"
+                "        return 'absent'\n"
+                "print('Installed versions: structuremap=' + installed('mountainash-structuremap') "
+                "+ ', pydantic=' + installed('pydantic') "
+                "+ ', xsdata=' + installed('xsdata'))",
+            ],
+            cwd=temp,
+            env=CLEAN_ENV,
+        )
+    )
     return python
 
 
@@ -63,9 +92,13 @@ def main() -> None:
         shutil.copy2(support / "runner.py", fixture / "runner.py")
 
         xml_python = install(built[0], temp, extra=True)
-        execute_smoke(xml_python, fixture, temp, ("independent", "write", "read", "invalid"))
+        execute_smoke(xml_python, fixture, temp, ("independent", "write", "read", "invalid", "pydantic"))
         base_python = install(built[0], temp, extra=False)
-        execute_smoke(base_python, fixture, temp, ("base", "missing-xml"))
+        execute_smoke(base_python, fixture, temp, ("base", "missing-xml", "pydantic"))
+        pydantic_python = install(
+            built[0], temp, extra=False, pydantic_constraint="==2.11.0"
+        )
+        execute_smoke(pydantic_python, fixture, temp, ("base", "pydantic"))
         print("Installed-wheel smoke passed using the wheel's declared pinned GitHub dependency")
 
 

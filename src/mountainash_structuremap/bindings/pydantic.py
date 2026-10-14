@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import is_dataclass
-from typing import ForwardRef, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel
 
@@ -16,7 +16,7 @@ from mountainash_structuremap.errors import StructureMapError
 
 class PydanticBinding:
     name = "pydantic"
-    capabilities = CapabilityReport(Parse=False, Serialize=False, Validate=False)
+    capabilities = CapabilityReport(Parse=True, Serialize=True, Validate=False)
 
     def __init__(self) -> None:
         self._dataclass = DataclassBinding()
@@ -50,18 +50,15 @@ class PydanticBinding:
                     "unavailable_binding", "XML-shaped records require xsdata", path=path,
                     owner="binding gap", remedy="Use the xsdata binding for XML-shaped records",
                 )
-            return self._dataclass.describe_record(cls, register, path=path)
+            return self._dataclass.describe_record(
+                cls, register, path=path,
+                record_predicate=lambda typ: issubclass(typ, BaseModel) or is_dataclass(typ),
+            )
         self._check_model(cls, path)
         members: list[Member] = []
         for name, field in cls.model_fields.items():
             member_path = "/".join(filter(None, (path, name)))
             annotation = field.annotation
-            if isinstance(annotation, (str, ForwardRef)):
-                raise StructureMapError(
-                    "annotation_resolution_failed", "Pydantic field annotation is unresolved",
-                    path=member_path, owner="binding gap",
-                    remedy="Resolve or rebuild the model before derivation",
-                )
             default: Literal["factory", "value", "required"] = (
                 "factory" if field.default_factory is not None
                 else "value" if not field.is_required()
@@ -101,6 +98,26 @@ class PydanticBinding:
         return self._dataclass.prepare_variant(
             alternatives, native_types=native_types, namespace=namespace, path=path,
         )
+
+    def parse(self, source: str | bytes, root_type: type[Any]) -> Any:
+        try:
+            return root_type.model_validate_json(source)
+        except Exception as exc:
+            raise StructureMapError(
+                "native_parse_failed", "Pydantic could not parse the JSON document", path="",
+                owner="native limitation",
+                remedy="Provide a valid document matching the prepared native Pydantic model",
+            ) from exc
+
+    def serialize(self, value: object) -> str:
+        try:
+            return cast(BaseModel, value).model_dump_json()
+        except Exception as exc:
+            raise StructureMapError(
+                "native_serialize_failed", "Pydantic could not serialize the native model", path="",
+                owner="native limitation",
+                remedy="Provide values supported by the native Pydantic model and its serializers",
+            ) from exc
 
 
 class PydanticRecordAdapter:

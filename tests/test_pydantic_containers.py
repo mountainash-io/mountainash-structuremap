@@ -168,3 +168,46 @@ def test_nested_revalidation_keeps_idempotent_native_validator_result():
     twice = reconstruct(decompose(restored, prepared), prepare(derive(RevalidatingParent)))
     assert twice.children[0].code == "SECOND"
     assert type(twice.children[0]) is Revalidated
+
+
+class NativeLeaf(BaseModel):
+    value: int = Field(alias="count", gt=0)
+
+
+@dataclass
+class PlainWrapper:
+    leaf: NativeLeaf
+
+
+class MixedGraph(BaseModel):
+    wrapper: PlainWrapper
+
+
+def test_native_records_remain_supported_through_plain_dataclass_members():
+    supplied = {"root": [{"_sm_key": "external", "wrapper_leaf_value": 7}]}
+    restored = reconstruct(supplied, prepare(derive(MixedGraph)))
+    assert type(restored.wrapper) is PlainWrapper
+    assert type(restored.wrapper.leaf) is NativeLeaf
+    assert restored.wrapper.leaf.value == 7
+    assert decompose(restored, prepare(derive(MixedGraph)))["root"][0]["wrapper_leaf_value"] == 7
+
+
+@dataclass
+class RecursiveWrapper:
+    children: list[MixedRecursive]
+
+
+class MixedRecursive(BaseModel):
+    value: int
+    wrapper: RecursiveWrapper | None = None
+
+
+def test_recursive_membership_can_cross_plain_and_native_record_boundaries():
+    source = MixedRecursive(value=1, wrapper=RecursiveWrapper([MixedRecursive(value=2), MixedRecursive(value=3)]))
+    rows = decompose(source, prepare(derive(MixedRecursive)))
+    restored = reconstruct({name: list(reversed(values)) for name, values in rows.items()},
+                           prepare(derive(MixedRecursive)))
+    assert type(restored.wrapper) is RecursiveWrapper
+    assert [type(child) for child in restored.wrapper.children] == [MixedRecursive, MixedRecursive]
+    assert [child.value for child in restored.wrapper.children] == [2, 3]
+    assert [child.wrapper for child in restored.wrapper.children] == [None, None]

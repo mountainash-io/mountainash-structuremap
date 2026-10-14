@@ -1,21 +1,25 @@
 """Native BaseModel data, renamed columns and independent table reconstruction."""
 from __future__ import annotations
 
+import json
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from mountainash_structuremap import (
     MappingSpec,
     StructureMapError,
     decompose,
     derive,
+    parse,
     prepare,
     reconstruct,
+    serialize,
 )
 
 
 class Item(BaseModel):
+    model_config = ConfigDict(serialize_by_alias=True)
     product: str
     quantity: int = Field(alias="qty", ge=1)
 
@@ -110,6 +114,15 @@ def main() -> None:
     delivered = {name: list(reversed(rows)) for name, rows in emitted.items()}
     assert reconstruct(delivered, prepare(derive(Inventory), variants)) == inventory
     print("Recorded Split variants reconstructed:", inventory)
+
+    wire = serialize(external, prepared)
+    assert json.loads(wire) == {
+        "items": [{"product": "X", "qty": 3}, {"product": "Y", "qty": 7}],
+        "token": "authored-token",
+    }
+    assert parse(wire, prepared) == external
+    assert factory_calls == ["created"]
+    print("Native alias-oriented JSON:", wire)
 
 
 if __name__ == "__main__":

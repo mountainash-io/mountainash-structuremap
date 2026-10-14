@@ -319,10 +319,16 @@ unsupported rather than being silently flattened or discarded. Separate
 `validate_native=True`, unvalidated construction and Preserve presence are not
 available for this binding.
 
+`parse(json_text_or_bytes, prepared)` delegates to native `model_validate_json`;
+`serialize(value, prepared)` delegates to `model_dump_json`. Native aliases,
+validators and serialization configuration govern documents, independently of
+table column names. For alias-oriented output, configure the native model with
+`ConfigDict(serialize_by_alias=True)`. Document parsing does not force canonical
+names or retry aliases. Native parse/serialization errors remain chained causes.
+
 Run `hatch run test:python examples/pydantic_roundtrip.py` to see renamed columns,
-reordered delivery, independent table reconstruction, native validation errors
-and recorded Split variants. Pydantic document APIs and installed-delivery
-qualification remain separate checkpoints; this data binding does not claim them.
+reordered delivery, independent table reconstruction, native validation errors,
+recorded Split variants and native alias-oriented JSON.
 
 ### Native boundary and normalization
 
@@ -355,8 +361,7 @@ presence preservation and other binding-specific strategies are not executable.
 Preparation refuses those requests. The canonical definitions and policy
 declarations can describe more than this executor supports.
 
-Pydantic document parsing/serialization, YAML/JSON authoring, Parquet output and
-incremental execution are separate work.
+YAML/JSON mapping authoring, Parquet output and incremental execution are separate work.
 
 The former namespace blocker in
 [issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
@@ -384,6 +389,7 @@ so installing it also requires Git and read access to that repository.
 hatch run test:test
 hatch run test:python examples/dataclass_roundtrip.py
 hatch run test:python examples/xml_roundtrip.py
+hatch run test:python examples/pydantic_roundtrip.py
 hatch run ruff:check
 hatch run mypy:check
 hatch build
@@ -396,7 +402,11 @@ run this package. Product work uses feature branches targeting protected
 `develop`; releases go through a release branch to `main`.
 
 The wheel smoke builds a new wheel and installs `[xml]` and base-only packages in
-separate temporary environments, checking dependencies with `pip check`.
+separate temporary environments, checking dependencies with `pip check`. Both run
+Pydantic reconstruction from independent renamed/ordered rows, native JSON
+round-trips and constrained-input rejection. An additional base-only environment
+installs `pydantic==2.11.0` and runs the same Pydantic and dataclass scenarios.
+Every environment reports its actual installed versions.
 The XML run reconstructs independently authored Split, recursive and fragment
 tables. Separate isolated writer/reader processes transfer portable declarations,
 mapping, TypeSpecs and actual Decimal/date/time/datetime table carriers.

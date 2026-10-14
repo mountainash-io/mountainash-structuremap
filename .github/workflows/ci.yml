@@ -35,6 +35,7 @@ jobs:
           git config --global url."https://x-access-token:${CI_READ_TOKEN}@github.com/mountainash-io/mountainash.git".insteadOf https://github.com/mountainash-io/mountainash.git
           python -m pip install "hatch>=1.14"
           hatch run test:test
+          hatch run test:python examples/pydantic_roundtrip.py
 
   foundation-wheel:
     name: foundation-wheel

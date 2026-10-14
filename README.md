@@ -148,6 +148,11 @@ dataclasses select it automatically; `derive(Model, binding="xsdata")` selects
 it explicitly. Missing XML dependencies fail with installation guidance rather
 than falling back to a plain dataclass interpretation.
 
+Users author the xsdata models supplied to StructureMap and own any generation
+from XSD. StructureMap consumes those classes and their metadata; it does not
+generate models, orchestrate the generator or repair model metadata. Compatible
+handwritten models are also supported within the declared binding capabilities.
+
 ```python
 from mountainash_structuremap import parse, serialize
 
@@ -261,12 +266,12 @@ Wildcard/mixed fragments remain later Phase 2 work. Native Pydantic/JSON binding
 YAML/JSON authoring, Parquet output and incremental execution are separate work.
 The current XML slice is not complete Phase 2 qualification.
 
-**Checkpoint B remains NO-GO:** xsdata 26.2's serializer and parser disagree on
-a nested inherited-namespace case beneath an explicitly namespaced enclosing
-element. [Issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
-contains the dependency-only reproduction and clearing condition. Passing
-explicit/basic inherited namespace cases do not clear this gate; no local
-namespace workaround is implemented.
+Checkpoint B awaits owner review. The former namespace blocker in
+[issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
+was withdrawn: models generated for that namespace structure passed native and
+StructureMap round-trips. The failing handwritten fixture omitted namespace
+metadata emitted by the generator. Broader XML integration qualification remains
+open; generator use in qualification is test setup, not framework functionality.
 
 ## Development
 

@@ -6,7 +6,8 @@
 - Preserve supported native XML element choices, local unions, `xsi:type` substitutions, selected nil payloads and token-choice QNames. Freeze native associations at preparation and reject unsupported ambiguity.
 - Add exact Decimal/facet and unbounded-integer codecs, explicit Typed/Lexical policies, canonical XML temporal/binary/QName conversion and frozen scalar-enum selection.
 - Preserve temporal offset presence through microsecond physical carriers and companions; reject unrepresentable Typed values with Lexical guidance and preflight invalid inverse pairs before model construction.
-- Qualify actual prepared Decimal and temporal values through Mountainash TypeSpec persistence and Arrow conversion, including empty/all-null data. Keep Checkpoint B acceptance blocked on the independently reproduced xsdata inherited-namespace defect in issue #5.
+- Qualify actual prepared Decimal and temporal values through Mountainash TypeSpec persistence and Arrow conversion, including empty/all-null data.
+- Withdraw issue #5's namespace upstream-blocker diagnosis after generated-model round-trips pass; the handwritten reproduction omitted namespace metadata. Model authorship and XSD-to-model generation belong to package users, not StructureMap.
 
 - Add optional xsdata 26.2 XML model derivation and native `parse`/`serialize` operations, including XML local-name collision guidance, wrappers, token lists and enum reconstruction.
 - Move record preparation and scalar conversion into native bindings while retaining the shared finite compiler/executor and complete preconstruction validation.

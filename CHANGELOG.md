@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add native Pydantic JSON parsing and serialization with native alias/configuration semantics and retained error causes, separate from canonical table reconstruction.
+- Extend existing installed-wheel qualification to Pydantic in XML/base-only environments and the minimum supported Pydantic 2.11.0.
+- Preserve native record discovery across nested plain dataclass boundaries, including mixed recursive record graphs, without advertising plain dataclass Literal validation.
+- Keep individually Annotated union branches distinct and report nested unresolved annotations with member-path and model-rebuild guidance.
+- Extend native Pydantic discovery with homogeneous primitive Literal fields and nested Annotated shapes; leave constraints and union normalization to native validation.
+- Qualify shared containers, finite recursion, model composition and recorded Split/Prefixed variants for Pydantic records without changing the shared executor.
+- Add the Pydantic BaseModel native-field vertical slice through the shared prepared executor: canonical member naming, direct reads, captured defaults and native validated reconstruction.
+- Support explicit validated construction for Pydantic record targets while retaining native error causes and rejecting unsupported plain-dataclass validation claims.
+- Reject custom Pydantic initialization and retained extras instead of risking silent canonical-value loss. Require Pydantic 2.11+.
 - Add Fragment/Reject policies for native XML wildcards, mixed content, compound wildcard choices and attribute wildcards, with per-use policy precedence.
 - Preserve standalone fragment namespace context, typed choice names, generic text/tails and singular wildcard aggregates. Validate fragment syntax and occurrence roles without application constructors before native binding.
 - Qualify supplied generated models and combined XML documents through source execution and isolated XML/base-only wheels, including independent recursive/Split/fragment tables and portable fresh-process scalar carriers.

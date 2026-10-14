@@ -67,7 +67,7 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
                 "native_type_mismatch",
                 f"Expected record {name}, got {type(instance).__qualname__}",
                 path=program.path,
-                remedy="Supply an instance of the declared dataclass",
+                remedy="Supply an instance of the declared native record",
             )
 
     def begin(instance: object, path: str) -> None:
@@ -107,7 +107,7 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
             "invalid_prepared_mapping",
             "Prepared root is not a record",
             path="",
-            remedy="Prepare a dataclass record root",
+            remedy="Prepare a native record root",
         )
 
     root_key = new_key()

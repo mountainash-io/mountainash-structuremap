@@ -12,11 +12,14 @@ from xml.etree.ElementTree import fromstring
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mountainash.typespec import TypeSpec  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 from wheel_models import (  # noqa: E402
     CATALOG_XML,
     Catalog,
     Entry,
     Note,
+    PydanticCatalog,
+    PydanticEntry,
     load_xml_types,
 )
 
@@ -223,6 +226,48 @@ def main(mode: str) -> None:
     if mode in {"independent", "write", "read", "invalid"}:
         load_xml_types()
     installed_path()
+    if mode == "pydantic":
+        import pydantic
+
+        print(f"Pydantic version: {pydantic.__version__}")
+        prepared = prepare(derive(PydanticCatalog), MappingSpec(overrides={
+            "entries/code": {"column": "identifier"},
+            "entries/amount": {"column": "quantity"},
+        }))
+        tables = {
+            "root": [{"_sm_key": "catalog-1"}],
+            "entries": [
+                {"_sm_key": "second", "_sm_parent": "catalog-1", "_sm_position": 8,
+                 "identifier": "second", "quantity": 2},
+                {"_sm_key": "first", "_sm_parent": "catalog-1", "_sm_position": 2,
+                 "identifier": "first", "quantity": 1},
+            ],
+        }
+        document = reconstruct(tables, prepared)
+        assert type(document) is PydanticCatalog
+        assert [type(item) for item in document.entries] == [PydanticEntry, PydanticEntry]
+        assert [(item.code, item.amount) for item in document.entries] == [("first", 1), ("second", 2)]
+        decomposed = decompose(document, prepared)
+        assert [(row["identifier"], row["quantity"]) for row in decomposed["entries"]] == [("first", 1), ("second", 2)]
+        assert [row["_sm_position"] for row in decomposed["entries"]] == [0, 1]
+        wire = serialize(document, prepared)
+        assert json.loads(wire) == {"records": [
+            {"entry-code": "first", "total": 1}, {"entry-code": "second", "total": 2},
+        ]}
+        parsed = parse(wire, prepared)
+        assert type(parsed) is PydanticCatalog
+        assert [(item.code, item.amount) for item in parsed.entries] == [("first", 1), ("second", 2)]
+        invalid = '{"records": [{"entry-code": "bad", "total": -1}]}'
+        try:
+            parse(invalid, prepared)
+        except StructureMapError as error:
+            assert isinstance(error.__cause__, ValidationError)
+            assert error.code == "native_parse_failed"
+            assert error.__cause__.errors()[0]["type"] == "greater_than"
+        else:
+            raise AssertionError("invalid constrained Pydantic input was accepted")
+        print("Pydantic native reconstruction, decomposition, alias JSON and validation passed")
+        return
 
     if mode == "independent":
         mapping = _mapping()

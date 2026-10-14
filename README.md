@@ -1,6 +1,6 @@
 # Mountainash StructureMap
 
-Transform native Python dataclass and xsdata XML models into typed in-memory tables and reconstruct them independently.
+Transform native Python dataclass, Pydantic BaseModel and xsdata XML models into typed in-memory tables and reconstruct them independently.
 
 ## Example
 
@@ -275,6 +275,61 @@ namespace declarations, source prefixes, source lexemes or original bytes.
 The combined XML example exercises choices, exact numbers, temporal offsets and
 mixed fragments in one document.
 
+### Pydantic model data
+
+Ordinary Pydantic `BaseModel` record classes select the native binding automatically;
+`derive(Model, binding="pydantic")` selects it explicitly. Field discovery uses
+`model_fields`, reads use attributes, and reconstruction uses native validated
+construction through the same prepared table executor.
+
+Mapping paths use Python member names. For `quantity: int = Field(alias="qty")`,
+`UseOverride(column="quantity_count")` maps `quantity` to the table column
+`quantity_count`. Reconstruction passes canonical member dictionaries to
+`model_validate(..., by_name=True, by_alias=False)`; it does not synthesize alias
+paths, retry aliases or change model configuration. Native before-validators must
+accept that canonical input. Native failures retain their exception causes.
+
+The supported data shapes use the shared table compiler and executor:
+
+| Native shape | Supported behavior |
+| --- | --- |
+| Primitive fields | `str`, `bool`, signed-i64 `int`, `float`, nullable values and homogeneous primitive `Literal` annotations. |
+| Records and containers | Nested records, lists, string-key maps, fixed tuples (including empty tuples), and finite recursive membership. Empty/null/all-null values follow Normalize below. |
+| Native model composition | Inherited fields/validators, resolved generic specializations and nested ordinary dataclasses. |
+| Variants | Singular and repeated Split/Prefixed layouts, recorded tags, and Literal-tagged discriminated model unions. Table payload validation precedes native construction. |
+
+`Annotated` metadata is left to native validation, including constraints nested
+inside containers. Literal lowering applies only to BaseModel fields; ordinary
+dataclass Literal fields remain unsupported because their constructors do not
+enforce those constraints. Richer scalar types such as `date`, Decimal, enums and
+binary are not given an implicit representation.
+
+Direct reads retain fields excluded from native serialization and captured
+default/factory values. Computed properties are not projected into columns, and
+supplied-field history is not restored. Native validation may normalize values or
+reselect a union after table dispatch: for example, a recorded string `"456"` can
+become integer `456` under native `int | str` left-to-right validation.
+
+`construction="validated"` is available for Pydantic record targets; it does not
+claim validation for nested plain dataclass constructors. Custom `__init__` models
+are rejected, including nested ones: their initialization can silently discard
+canonical values across native revalidation. Use standard model initialization
+and compatible field/model validators. Retained extras and RootModel remain
+unsupported rather than being silently flattened or discarded. Separate
+`validate_native=True`, unvalidated construction and Preserve presence are not
+available for this binding.
+
+`parse(json_text_or_bytes, prepared)` delegates to native `model_validate_json`;
+`serialize(value, prepared)` delegates to `model_dump_json`. Native aliases,
+validators and serialization configuration govern documents, independently of
+table column names. For alias-oriented output, configure the native model with
+`ConfigDict(serialize_by_alias=True)`. Document parsing does not force canonical
+names or retry aliases. Native parse/serialization errors remain chained causes.
+
+Run `hatch run test:python examples/pydantic_roundtrip.py` to see renamed columns,
+reordered delivery, independent table reconstruction, native validation errors,
+recorded Split variants and native alias-oriented JSON.
+
 ### Native boundary and normalization
 
 The plain-dataclass binding supports introspection, reading and construction,
@@ -306,8 +361,7 @@ presence preservation and other binding-specific strategies are not executable.
 Preparation refuses those requests. The canonical definitions and policy
 declarations can describe more than this executor supports.
 
-Native Pydantic/JSON bindings, YAML/JSON authoring, Parquet output and incremental
-execution are separate work.
+YAML/JSON mapping authoring, Parquet output and incremental execution are separate work.
 
 The former namespace blocker in
 [issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
@@ -319,7 +373,7 @@ models; generator use is test setup, not framework functionality.
 ## Development
 
 Requires Python 3.12+, Git and Hatch 1.14+; Hatch manages its configured uv
-installer. Canonical models use Pydantic 2.5+.
+installer. The package requires Pydantic 2.11+ for native name-only validation.
 
 Mountainash is sourced directly from GitHub at a pinned commit on `develop`:
 `c98f35ace19562dac0612fdd9f6c580a59bdc5f8`. The dependency in `pyproject.toml`
@@ -335,6 +389,7 @@ so installing it also requires Git and read access to that repository.
 hatch run test:test
 hatch run test:python examples/dataclass_roundtrip.py
 hatch run test:python examples/xml_roundtrip.py
+hatch run test:python examples/pydantic_roundtrip.py
 hatch run ruff:check
 hatch run mypy:check
 hatch build
@@ -347,7 +402,11 @@ run this package. Product work uses feature branches targeting protected
 `develop`; releases go through a release branch to `main`.
 
 The wheel smoke builds a new wheel and installs `[xml]` and base-only packages in
-separate temporary environments, checking dependencies with `pip check`.
+separate temporary environments, checking dependencies with `pip check`. Both run
+Pydantic reconstruction from independent renamed/ordered rows, native JSON
+round-trips and constrained-input rejection. An additional base-only environment
+installs `pydantic==2.11.0` and runs the same Pydantic and dataclass scenarios.
+Every environment reports its actual installed versions.
 The XML run reconstructs independently authored Split, recursive and fragment
 tables. Separate isolated writer/reader processes transfer portable declarations,
 mapping, TypeSpecs and actual Decimal/date/time/datetime table carriers.

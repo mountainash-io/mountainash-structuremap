@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import MISSING, Field, fields, is_dataclass
 from inspect import signature
 from types import ModuleType, UnionType
-from typing import Any, Literal, Tuple, Union, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, ForwardRef, Literal, Tuple, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
 
@@ -35,9 +35,13 @@ _SCALARS: dict[type, Literal["str", "int", "float", "bool"]] = {
 
 
 class DataclassBinding:
+    name = "dataclass"
     capabilities = CapabilityReport()
 
-    def describe_record(self, cls: type, register: Callable[[type, str], str], *, path: str) -> RecordDefinition:
+    def describe_record(
+        self, cls: type, register: Callable[[type, str], str], *, path: str,
+        record_predicate: Callable[[type], bool] = is_dataclass,
+    ) -> RecordDefinition:
         if issubclass(cls, BaseModel):
             raise StructureMapError(
                 "unavailable_binding", "This class requires the Pydantic binding", path=path,
@@ -71,7 +75,8 @@ class DataclassBinding:
             default: Literal["factory", "value", "required"] = (
                 "factory" if item.default_factory is not MISSING else "value" if item.default is not MISSING else "required"
             )
-            members.append(Member(name=item.name, shape=describe_annotation(hints[item.name], member_path, register),
+            members.append(Member(name=item.name, shape=describe_annotation(hints[item.name], member_path, register,
+                                                                              record_predicate=record_predicate),
                                   default_kind=default))
         return RecordDefinition(name=f"{cls.__module__}.{cls.__qualname__}", members=tuple(members))
 
@@ -229,38 +234,70 @@ def validate_constructor(cls: type, member_names: tuple[str, ...], *, path: str)
             remedy="Use a constructor accepting the mapped field keywords, with defaults for constructor-only arguments",
         ) from exc
 
+def _unwrap_annotated(annotation: Any) -> Any:
+    while get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    return annotation
+
 
 def describe_annotation(
     annotation: object,
     path: str,
     register: Callable[[type, str], str],
+    *,
+    record_predicate: Callable[[type], bool] = is_dataclass,
+    allow_literals: bool = False,
 ) -> Shape:
+    annotation = _unwrap_annotated(annotation)
+    if isinstance(annotation, (str, ForwardRef)):
+        raise StructureMapError(
+            "annotation_resolution_failed", "Native field annotation is unresolved",
+            path=path, owner="binding gap",
+            remedy="Resolve forward references or rebuild the native model before derivation",
+        )
     origin, args = get_origin(annotation), get_args(annotation)
+    if origin is Literal and allow_literals and args:
+        literal_type = type(args[0])
+        if literal_type in _SCALARS and all(type(value) is literal_type for value in args):
+            return Scalar(type=_SCALARS[literal_type])
     if isinstance(annotation, type) and annotation in _SCALARS:
         return Scalar(type=_SCALARS[annotation])
-    if isinstance(annotation, type) and is_dataclass(annotation):
+    if isinstance(annotation, type) and record_predicate(annotation):
         return RecordRef(definition=register(annotation, path))
     if origin in (Union, UnionType):
-        choice_types = tuple(arg for arg in args if arg is not type(None))
-        choices = tuple(
-            Alternative(key=arg.__name__, shape=describe_annotation(arg, path, register))
-            for arg in choice_types
-        )
-        shape: Shape = choices[0].shape if len(choices) == 1 else Alternatives(choices=choices)
+        choices: list[Alternative] = []
+        for arg in args:
+            if arg is type(None):
+                continue
+            arg = _unwrap_annotated(arg)
+            branch = describe_annotation(
+                arg, path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+            )
+            choices.append(Alternative(key=arg.__name__, shape=branch))
+        shape: Shape = choices[0].shape if len(choices) == 1 else Alternatives(choices=tuple(choices))
         return Nullable(value=shape) if type(None) in args else shape
     if origin is list and len(args) == 1:
-        return Sequence(item=describe_annotation(args[0], path, register))
+        return Sequence(item=describe_annotation(
+            args[0], path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+        ))
     if origin is dict and len(args) == 2:
         return Map(
-            key=describe_annotation(args[0], path, register),
-            value=describe_annotation(args[1], path, register),
+            key=describe_annotation(
+                args[0], path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+            ),
+            value=describe_annotation(
+                args[1], path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+            ),
         )
     if origin is tuple and annotation is not Tuple and (not args or args[-1] is not Ellipsis):
-        return Positional(items=tuple(describe_annotation(arg, path, register) for arg in args))
+        return Positional(items=tuple(describe_annotation(
+            arg, path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+        ) for arg in args))
     raise StructureMapError(
         "unsupported_annotation",
         f"Unsupported annotation {annotation!r}",
         path=path,
         owner="binding gap",
-        remedy="Use a supported scalar or dataclass annotation",
+        remedy="Use a supported scalar, container or native record annotation; "
+        "BaseModel Literal fields must share one supported primitive type",
     )

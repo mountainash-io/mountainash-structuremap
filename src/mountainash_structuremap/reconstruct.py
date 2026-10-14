@@ -11,12 +11,15 @@ from mountainash_structuremap.errors import StructureMapError
 from mountainash_structuremap.prepared import (
     LinkProgram,
     MapProgram,
+    NullProgram,
     PreparedMapping,
     RecordProgram,
     ScalarProgram,
     SequenceProgram,
     TupleProgram,
     ValueProgram,
+    VariantBranch,
+    VariantProgram,
 )
 
 _I64_MIN = -(2**63)
@@ -218,6 +221,7 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                     column=prepared.parent_column,
                 )
             identity = (table_name, parent_table, parent_key)
+            position_identity = (plan._position_group or table_name, parent_table, parent_key)
             if plan._kind in ("sequence", "map"):
                 position = row[prepared.position_column]
                 if type(position) is not int or not 0 <= position <= _I64_MAX:
@@ -230,7 +234,7 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                         row=index,
                         column=prepared.position_column,
                     )
-                if position in positions[identity]:
+                if position in positions[position_identity]:
                     raise _error(
                         "duplicate_position",
                         f"Duplicate position {position} for parent {parent_key!r}",
@@ -240,7 +244,7 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                         row=index,
                         column=prepared.position_column,
                     )
-                positions[identity].add(position)
+                positions[position_identity].add(position)
                 if plan._kind == "map":
                     map_key = row[prepared.map_key_column]
                     if type(map_key) is not str:
@@ -253,7 +257,8 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                             row=index,
                             column=prepared.map_key_column,
                         )
-                    if map_key in map_keys[identity]:
+                    map_identity = (plan._position_group or table_name, parent_table, parent_key)
+                    if map_key in map_keys[map_identity]:
                         raise _error(
                             "duplicate_map_key",
                             f"Duplicate map key {map_key!r}",
@@ -263,7 +268,7 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                             row=index,
                             column=prepared.map_key_column,
                         )
-                    map_keys[identity].add(map_key)
+                    map_keys[map_identity].add(map_key)
             elif plan._kind == "single":
                 if groups[identity]:
                     raise _error(
@@ -294,6 +299,21 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
         by_position = {row[position_column]: row for row in group}
         return [by_position[item[position_column]] for item in sorted_metadata]
 
+
+    def variant_members(
+        program: VariantProgram, parent_table: str, parent_key: str
+    ) -> list[tuple[Mapping[str, Cell], str]]:
+        tables = [branch.table for branch in program.alternatives if branch.table is not None]
+        if program.null_table is not None:
+            tables.append(program.null_table)
+        result = [
+            (row, table_name)
+            for table_name in tables
+            for row in groups.get((table_name, parent_table, parent_key), [])
+        ]
+        result.sort(key=lambda item: cast(int, item[0][prepared.position_column]))
+        return result
+
     def descendants(table_name: str, key: str) -> bool:
         return any(
             parent_table == table_name and parent_key == key and group
@@ -311,6 +331,18 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                 pending.extend(child for _, child in reversed(program.members))
             elif isinstance(program, TupleProgram):
                 pending.extend(reversed(program.items))
+            elif isinstance(program, VariantProgram):
+                if program.repeated and program.layout == "split":
+                    if variant_members(program, table_name, key):
+                        return False
+                    continue
+                if program.payload_null_column is not None:
+                    payload_marker = row[program.payload_null_column]
+                    if payload_marker is True or (payload_marker is not None and type(payload_marker) is not bool):
+                        return False
+                if row[program.discriminator_column] is not None:
+                    return False
+                pending.extend(branch.program for branch in reversed(program.alternatives))
             elif isinstance(program, (SequenceProgram, MapProgram)):
                 if groups.get((program.table, table_name, key)):
                     return False
@@ -318,6 +350,50 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                 if groups.get((program.table, table_name, key)):
                     return False
         return True
+
+    def selected_payload_is_null(
+        program: VariantProgram,
+        branch: VariantBranch,
+        row: Mapping[str, Cell],
+        table_name: str,
+        key: str,
+        row_number: int,
+    ) -> bool:
+        column = program.payload_null_column
+        if column is None:
+            return False
+        marker = row[column]
+        if type(marker) is not bool:
+            raise _error(
+                "invalid_variant_payload",
+                "Selected alternative null flag must be a boolean",
+                path=program.path,
+                remedy="Supply false for a payload or true for a declared nil payload",
+                table=table_name,
+                row=row_number,
+                column=column,
+            )
+        if marker and not branch.nullable_payload:
+            raise _error(
+                "invalid_variant_payload",
+                f"Alternative {branch.key!r} does not declare a nullable payload",
+                path=program.path,
+                remedy="Clear the payload null flag or select a nillable alternative",
+                table=table_name,
+                row=row_number,
+                column=column,
+            )
+        if marker and not no_content(branch.program, row, table_name, key):
+            raise _error(
+                "invalid_variant_payload",
+                "Nil selected payload has populated content",
+                path=program.path,
+                remedy="Clear payload fields and descendants or clear the payload null flag",
+                table=table_name,
+                row=row_number,
+                column=column,
+            )
+        return marker
 
     # Null markers are structural assertions: no business projection or child occurrence may coexist.
     for table_name, plan in prepared.tables.items():
@@ -371,7 +447,11 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
     # This walk uses row references, not a materialized native-value tree.
     consumed: set[tuple[str, str]] = set()
     checked_scalars: dict[tuple[int, str, str], object] = {}
-    validation: list[tuple[int, Mapping[str, Cell], str, int]] = [(prepared.root, root_row, prepared.root_table, 0)]
+    checked_variants: dict[tuple[int, str, str], str | None] = {}
+    checked_variant_nulls: set[tuple[int, str, str]] = set()
+    validation: list[tuple[int, Mapping[str, Cell], str, int]] = [
+        (prepared.root, root_row, prepared.root_table, 0)
+    ]
     while validation:
         value_id, value_row, value_table, value_number = validation.pop()
         value_program = prepared.programs[value_id]
@@ -384,6 +464,127 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
             checked_scalars[(value_id, value_table, value_key)] = _scalar_cell(
                 value_row, value_program, table=value_table, row_number=value_number
             )
+        elif isinstance(value_program, VariantProgram):
+            if value_program.repeated and value_program.layout == "split":
+                variant_rows = variant_members(value_program, value_table, value_key)
+                branches_by_table = {
+                    branch.table: branch for branch in value_program.alternatives if branch.table is not None
+                }
+                for child, child_table in variant_rows:
+                    child_key = cast(str, child[prepared.key_column])
+                    child_number = row_numbers[child_table][child_key]
+                    if child_table == value_program.null_table:
+                        if (
+                            not prepared.tables[child_table]._nullable_member
+                            or child[prepared.null_column] is not True
+                        ):
+                            raise _error(
+                                "invalid_variant_payload",
+                                "Null-role row must have a true null marker",
+                                path=value_program.path,
+                                remedy="Use the prepared $null role only for a null occurrence",
+                                table=child_table,
+                                row=child_number,
+                                column=prepared.null_column,
+                            )
+                        if child[value_program.discriminator_column] is not None:
+                            raise _error(
+                                "invalid_discriminator",
+                                "Null-role row must have a null discriminator",
+                                path=value_program.path,
+                                remedy="Clear the discriminator for a null occurrence",
+                                table=child_table,
+                                row=child_number,
+                                column=value_program.discriminator_column,
+                            )
+                        consumed.add((child_table, child_key))
+                        checked_variants[(value_id, child_table, child_key)] = None
+                        continue
+                    branch = branches_by_table.get(child_table)
+                    if branch is None or child[value_program.discriminator_column] != branch.tag:
+                        raise _error(
+                            "invalid_discriminator",
+                            "Discriminator does not agree with the selected Split alternative table",
+                            path=value_program.path,
+                            remedy="Place the occurrence in its declared alternative table and use its tag",
+                            table=child_table,
+                            row=child_number,
+                            column=value_program.discriminator_column,
+                        )
+                    payload_is_null = selected_payload_is_null(
+                        value_program, branch, child, child_table, child_key, child_number
+                    )
+                    checked_variants[(value_id, child_table, child_key)] = branch.key
+                    if payload_is_null:
+                        checked_variant_nulls.add((value_id, child_table, child_key))
+                        consumed.add((child_table, child_key))
+                    else:
+                        validation.append((branch.program, child, child_table, child_number))
+            else:
+                tag = value_row[value_program.discriminator_column]
+                branch = next(
+                    (item for item in value_program.alternatives if item.tag == tag),
+                    None,
+                )
+                if tag is None and value_program.nullable:
+                    if value_program.payload_null_column is not None:
+                        null_payload = value_row[value_program.payload_null_column]
+                        if type(null_payload) is not bool or null_payload:
+                            raise _error(
+                                "invalid_variant_payload",
+                                "A null variant cannot carry a selected-payload null flag",
+                                path=value_program.path,
+                                remedy="Set the selected-payload null flag false or select its discriminator",
+                                table=value_table,
+                                row=value_number,
+                                column=value_program.payload_null_column,
+                            )
+                    if any(
+                        not no_content(item.program, value_row, value_table, value_key)
+                        for item in value_program.alternatives
+                    ):
+                        raise _error(
+                            "invalid_variant_payload",
+                            "A null variant has populated alternative payload",
+                            path=value_program.path,
+                            remedy="Clear all alternative fields and descendants or select a discriminator",
+                            table=value_table,
+                            row=value_number,
+                            column=value_program.discriminator_column,
+                        )
+                    checked_variants[(value_id, value_table, value_key)] = None
+                    continue
+                if branch is None:
+                    raise _error(
+                        "invalid_discriminator",
+                        f"Unknown variant discriminator {tag!r}",
+                        path=value_program.path,
+                        remedy="Use the tag for one prepared alternative",
+                        table=value_table,
+                        row=value_number,
+                        column=value_program.discriminator_column,
+                    )
+                payload_is_null = selected_payload_is_null(
+                    value_program, branch, value_row, value_table, value_key, value_number
+                )
+                for inactive in value_program.alternatives:
+                    if inactive.key != branch.key and not no_content(
+                        inactive.program, value_row, value_table, value_key
+                    ):
+                        raise _error(
+                            "invalid_variant_payload",
+                            f"Inactive alternative {inactive.key!r} has populated payload",
+                            path=value_program.path,
+                            remedy="Clear fields and descendant rows for inactive alternatives",
+                            table=value_table,
+                            row=value_number,
+                            column=value_program.discriminator_column,
+                        )
+                checked_variants[(value_id, value_table, value_key)] = branch.key
+                if payload_is_null:
+                    checked_variant_nulls.add((value_id, value_table, value_key))
+                else:
+                    validation.append((branch.program, value_row, value_table, value_number))
         elif isinstance(value_program, (RecordProgram, TupleProgram)):
             if value_program.nullable and no_content(value_id, value_row, value_table, value_key):
                 continue
@@ -394,8 +595,8 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
             )
             validation.extend((child, value_row, value_table, value_number) for child in reversed(child_ids))
         elif isinstance(value_program, (SequenceProgram, MapProgram, LinkProgram)):
-            children = groups.get((value_program.table, value_table, value_key), [])
-            if isinstance(value_program, LinkProgram) and not children and not value_program.nullable:
+            collection_rows = groups.get((value_program.table, value_table, value_key), [])
+            if isinstance(value_program, LinkProgram) and not collection_rows and not value_program.nullable:
                 raise _error(
                     "missing_required_link",
                     "Required recursive link has no row",
@@ -412,8 +613,10 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                     value_program.table,
                     row_numbers[value_program.table][cast(str, child[prepared.key_column])],
                 )
-                for child in reversed(children)
+                for child in reversed(collection_rows)
             )
+        elif isinstance(value_program, NullProgram):
+            continue
         else:
             raise _error(
                 "invalid_prepared_mapping",
@@ -450,6 +653,37 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
     push_eval(stack, prepared.root, root_row, prepared.root_table, 0)
     while stack:
         op, program_id, row, row_table, row_number, extra = stack.pop()
+        if op == "finish_variant_member":
+            variant = cast(VariantProgram, prepared.programs[program_id])
+            alternative_key, payload_is_null = cast(tuple[str | None, bool], extra)
+            if alternative_key is None:
+                results.append(None)
+            elif payload_is_null:
+                results.append(variant.adapter.construct(alternative_key, None))
+            else:
+                payload = results.pop()
+                results.append(variant.adapter.construct(alternative_key, payload))
+            continue
+        if op == "finish_variant_single":
+            variant = cast(VariantProgram, prepared.programs[program_id])
+            payload = results.pop()
+            results.append(variant.adapter.construct(cast(str, extra), payload))
+            continue
+        if op == "finish_variant_sequence":
+            count = cast(int, extra)
+            values = results[-count:] if count else []
+            if count:
+                del results[-count:]
+            variant = cast(VariantProgram, prepared.programs[program_id])
+            results.append(tuple(values) if variant.container == "tuple" else values)
+            continue
+        if op == "finish_variant_map":
+            count, map_keys_for_values = cast(tuple[int, tuple[str, ...]], extra)
+            values = results[-count:] if count else []
+            if count:
+                del results[-count:]
+            results.append(dict(zip(map_keys_for_values, values, strict=True)))
+            continue
         if op == "finish_record":
             count = cast(int, extra)
             values = results[-count:] if count else []
@@ -519,6 +753,63 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                 results.append(None)
                 continue
 
+        if isinstance(program, VariantProgram):
+            if program.repeated and program.layout == "split":
+                variant_rows = variant_members(program, row_table, key)
+                if not variant_rows and program.nullable:
+                    results.append(None)
+                    continue
+                if program.map_values:
+                    map_keys_for_values = tuple(
+                        cast(str, child[prepared.map_key_column]) for child, _ in variant_rows
+                    )
+                    finish_op = "finish_variant_map"
+                    finish_extra: object = (len(variant_rows), map_keys_for_values)
+                else:
+                    finish_op = "finish_variant_sequence"
+                    finish_extra = len(variant_rows)
+                stack.append((finish_op, program_id, row, row_table, row_number, finish_extra))
+                for child, child_table in reversed(variant_rows):
+                    child_key = cast(str, child[prepared.key_column])
+                    child_number = row_numbers[child_table][child_key]
+                    if child_table == program.null_table:
+                        stack.append(
+                            ("finish_variant_member", program_id, child, child_table, child_number, (None, False))
+                        )
+                        continue
+                    alternative_key = checked_variants[(program_id, child_table, child_key)]
+                    branch = next(item for item in program.alternatives if item.key == alternative_key)
+                    is_nil_payload = (program_id, child_table, child_key) in checked_variant_nulls
+                    stack.append(
+                        (
+                            "finish_variant_member",
+                            program_id,
+                            child,
+                            child_table,
+                            child_number,
+                            (alternative_key, is_nil_payload),
+                        )
+                    )
+                    if not is_nil_payload:
+                        stack.append(("eval", branch.program, child, child_table, child_number, None))
+                continue
+            selected_identity = (program_id, row_table, key)
+            alternative_key = checked_variants[selected_identity]
+            if alternative_key is None:
+                results.append(None)
+                continue
+            if selected_identity in checked_variant_nulls:
+                results.append(program.adapter.construct(alternative_key, None))
+                continue
+            branch = next(item for item in program.alternatives if item.key == alternative_key)
+            stack.append(
+                ("finish_variant_single", program_id, row, row_table, row_number, alternative_key)
+            )
+            stack.append(("eval", branch.program, row, row_table, row_number, None))
+            continue
+        if isinstance(program, NullProgram):
+            results.append(None)
+            continue
         if isinstance(program, ScalarProgram):
             checked = checked_scalars[(program_id, row_table, key)]
             results.append(None if checked is None else program.codec.decode(checked))
@@ -541,28 +832,28 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                 stack.append(("eval", child_id, row, row_table, row_number, None))
             continue
         if isinstance(program, (SequenceProgram, MapProgram)):
-            child_rows = members(program.table, row_table, key)
-            if program.nullable and not child_rows:
+            collection_rows = members(program.table, row_table, key)
+            if program.nullable and not collection_rows:
                 results.append(None)
                 continue
             plan = prepared.tables[program.table]
             child_program = plan._program
             is_map = isinstance(program, MapProgram)
             if is_map:
-                map_key_values = tuple(cast(str, child[prepared.map_key_column]) for child in child_rows)
-                finish_extra: object = (len(child_rows), map_key_values)
+                map_key_values = tuple(cast(str, child[prepared.map_key_column]) for child in collection_rows)
+                finish_extra = (len(collection_rows), map_key_values)
             else:
-                finish_extra = len(child_rows)
+                finish_extra = len(collection_rows)
             stack.append(
                 ("finish_map" if is_map else "finish_sequence", program_id, row, row_table, row_number, finish_extra)
             )
-            for child in reversed(child_rows):
+            for child in reversed(collection_rows):
                 child_key = cast(str, child[prepared.key_column])
                 stack.append(("eval", child_program, child, program.table, row_numbers[program.table][child_key], None))
             continue
         if isinstance(program, LinkProgram):
-            child_rows = members(program.table, row_table, key)
-            if not child_rows:
+            linked_rows = members(program.table, row_table, key)
+            if not linked_rows:
                 if program.nullable:
                     results.append(None)
                     continue
@@ -574,24 +865,24 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
                     table=row_table,
                     row=row_number,
                 )
-            if len(child_rows) != 1:
+            if len(linked_rows) != 1:
                 raise _error(
                     "singular_cardinality",
-                    f"Expected one linked row, got {len(child_rows)}",
+                    f"Expected one linked row, got {len(linked_rows)}",
                     path=program.path,
                     remedy="Supply at most one linked occurrence",
                     table=program.table,
-                    row=row_numbers[program.table][cast(str, child_rows[1][prepared.key_column])],
+                    row=row_numbers[program.table][cast(str, linked_rows[1][prepared.key_column])],
                 )
-            child = child_rows[0]
-            child_key = cast(str, child[prepared.key_column])
+            linked_row = linked_rows[0]
+            linked_key = cast(str, linked_row[prepared.key_column])
             stack.append(
                 (
                     "eval",
                     prepared.tables[program.table]._program,
-                    child,
+                    linked_row,
                     program.table,
-                    row_numbers[program.table][child_key],
+                    row_numbers[program.table][linked_key],
                     None,
                 )
             )

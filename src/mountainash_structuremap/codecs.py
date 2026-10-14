@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Literal, Protocol
 
 from mountainash.typespec.spec import FieldSpec
@@ -8,7 +10,7 @@ from mountainash.typespec.universal_types import UniversalType
 
 from mountainash_structuremap.errors import StructureMapError
 
-Cell = str | int | float | bool | None
+Cell = str | int | float | bool | Decimal | datetime | date | time | None
 
 
 @dataclass(frozen=True)

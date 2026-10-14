@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import is_dataclass
 from enum import Enum
 from typing import TypeVar
 
@@ -11,8 +12,8 @@ T = TypeVar("T")
 
 
 def derive(root_type: type[T], *, binding: str | None = None) -> DerivedModel[T]:
-    if not isinstance(root_type, type) or issubclass(root_type, Enum):
-        raise StructureMapError("unsupported_root", "Root must be a native model class", owner="binding gap",
+    if not isinstance(root_type, type) or issubclass(root_type, Enum) or not is_dataclass(root_type):
+        raise StructureMapError("unsupported_root", "Root must be a native dataclass record", owner="binding gap",
                                 remedy="Pass a supported dataclass model type")
     native: dict[str, type] = {}
     definitions: dict[str, RecordDefinition] = {}
@@ -34,7 +35,7 @@ def derive(root_type: type[T], *, binding: str | None = None) -> DerivedModel[T]
             return name
         native[name] = cls
         setattr(selected, "_native_types", native)
-        if issubclass(cls, Enum):
+        if not is_dataclass(cls):
             return name
         definitions[name] = RecordDefinition(name=name, members=())
         described = selected.describe_record(cls, register, path=path)

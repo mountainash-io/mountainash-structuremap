@@ -113,6 +113,34 @@ are declarable but fail during preparation rather than being silently ignored.
 Canonical strategy types live in `mountainash_structuremap.mapping`; these
 declarations do not by themselves supply casts or additional binding capabilities.
 
+### Alternatives
+
+Declared dataclass unions and supported native XML choices use frozen alternative
+associations, not inference from populated payload columns. Unknown runtime
+classes or QNames cannot extend a prepared schema.
+
+- Repeated `variant_layout="split"` uses separate alternative tables with one
+  shared position domain per collection occurrence. Positions may have gaps;
+  duplicates across alternative tables are invalid.
+- `variant_layout="prefixed"` puts alternatives in one occurrence row with
+  disjoint payload projections. Inactive payload cells and descendants must be
+  empty. Singular alternatives use inline projections or finite recursive links.
+- Recorded discriminators can configure their column and tag values. Source
+  discriminator inference, Shared and EAV layouts remain unavailable.
+- `UseOverride.alternatives` configures each declared key's `prefix`, and its
+  `table` for repeated Split. The reserved `$null` layout names the separate
+  null-occurrence table; a selected nillable XML payload is distinct from that
+  null occurrence and from a present all-null record.
+- Native member paths traverse matching alternatives, including element choices
+  containing `xsi:type` alternatives. Per-use overrides do not leak into unrelated
+  branches or recursive depths. Explicit collisions fail with configuration
+  guidance.
+
+The XML adapter supports retained `DerivedElement` QNames, declared local unions,
+native `xsi:type` subclasses/sibling substitutions, and distinct token item types.
+An ambiguous empty token choice requires a retained explicit QName; the binding
+does not recover information discarded by native parsing.
+
 ### XML documents
 
 Install `mountainash-structuremap[xml]` for the xsdata 26.2 binding. XML-shaped
@@ -141,16 +169,15 @@ their declared encoding through `from_bytes`. The standard-library
 This avoids xsdata 26.2's `from_string` re-encoding defect, tracked separately in
 [issue #4](https://github.com/mountainash-io/mountainash-structuremap/issues/4).
 
-The current XML slice supports primitive and primitive-valued enum fields,
-nullable values, inline/empty records, repeated elements, token collections and
-wrappers. Native list/tuple containers and repeated nil members retain their
-occurrences; nil members do not make an empty required collection null.
-It retains XML names, namespaces and element/attribute/text kinds.
+The XML binding supports scalar and enum fields, nullable values, inline/empty
+records, repeated elements, token collections and wrappers. Native list/tuple
+containers and repeated nil members retain their occurrences; nil members do not
+make an empty required collection null. XML names, namespaces and
+element/attribute/text kinds are retained.
+
 Columns default to XML local names; same-local-name collisions require explicit
 `column` overrides addressed by native attribute paths. Overrides change table
-layout, not native XML names. XML integers use canonical decimal strings instead
-of silently narrowing to signed i64; Python's configured integer-to-decimal
-conversion limit still applies.
+layout, not native XML names.
 
 Preparation invokes neither native constructors nor default factories.
 Reconstruction restores captured values after validating all table input.
@@ -163,6 +190,41 @@ Compound choices with overlapping Python types that xsdata cannot bind fail
 during derivation/preparation, naming the field and conflicting alternatives.
 Use distinct native intermediate types/subclasses supported by xsdata; differing
 QNames or `DerivedElement` do not remove that native limitation.
+
+### XML scalar representations
+
+`value_space="typed"` or `"lexical"` can be selected in mapping defaults or at a
+native field path. Representation is fixed at preparation, including for empty
+and all-null tables. Unsupported Typed requests fail with Lexical guidance;
+values outside a prepared domain never trigger a fallback or a rounding cast.
+
+| Source datatype | Prepared representation |
+|---|---|
+| String, boolean, float | Native scalar carriers by default. Explicit Lexical uses canonical boolean/double text, including infinities, NaN and signed zero. Empty strings are data. |
+| Integer | Canonical decimal text unless declared bounds prove signed-i64 fit. Integer enums can use their finite native domain as that proof. Conversion does not change Python's process-wide digit limit. |
+| Decimal | Exact Decimal cells with `DecimalDtype(p,s)` when retained total/fraction facets prove a portable domain; otherwise canonical decimal text. Absent tighter bounds, `p=total_digits+fraction_digits`; portable precision is at most 38. Source facets are checked even when a value fits the wider storage declaration. |
+| `XmlDateTime` | Naive UTC `timestamp[us]` plus an offset-minute companion. A null offset means timezone absent and the datetime is wall time; zero means an explicit UTC offset. |
+| `XmlDate`, `XmlTime` | Local date or `time64[us]`, plus an offset-minute companion. Local fields are not UTC-normalized. |
+| `XmlPeriod`, `XmlDuration` | Canonical lexical text. Partial-date components/subtypes and calendar months are not replaced with invented complete dates or fixed timedeltas. |
+| Binary, QName | Declared `base16`/`base64` text or expanded QName identity. No portable Typed carrier is selected; explicit Typed fails. |
+| Enum | The value's scalar representation plus a frozen native member association; inverse selection does not invoke enum lookup hooks. |
+
+Offset companions use the configured metadata namespace: `when` produces
+`_sm_when_offset` by default. Typed datetime/time reject hour 24, submicrosecond
+precision and out-of-range Python carriers. Select Lexical for those values.
+Lexical temporal canonicalization follows XSD 1.1: local fields and the retained
+offset are preserved, zero offsets become `Z`, and valid `24:00:00` normalizes to
+midnight. Independently supplied text must already be canonical.
+
+Numeric facets and partial-date format declarations come only from retained
+native metadata. The binding does not recover restrictions from an XSD document
+or infer them from field names or sample values. This is exact conversion under
+the declared native contract, not full XSD validation.
+
+The example exercises exact large decimals, temporal offsets and Lexical
+overrides. Prepared declarations also support Mountainash Frictionless
+persistence and Arrow schema/value conversion; this does not add a file writer.
+
 
 ### Native boundary and normalization
 
@@ -190,15 +252,21 @@ exceptions remain the chained cause.
 
 ### Not yet executable
 
-Variants, source-backed keys, lenient/unordered collections, shared tables, casts,
+Source-backed keys, lenient/unordered collections, shared tables, casts,
 presence preservation and other binding-specific strategies are not executable.
 Preparation refuses those requests. The canonical definitions and policy
 declarations can describe more than this executor supports.
 
-XML variants, wildcard/mixed fragments, numeric facets and temporal codecs remain
-later Phase 2 work. Native Pydantic/JSON bindings, general lexical/value-space
-policies, YAML/JSON authoring, Parquet output and incremental execution are
-separate work. The current XML slice is not complete Phase 2 qualification.
+Wildcard/mixed fragments remain later Phase 2 work. Native Pydantic/JSON bindings,
+YAML/JSON authoring, Parquet output and incremental execution are separate work.
+The current XML slice is not complete Phase 2 qualification.
+
+**Checkpoint B remains NO-GO:** xsdata 26.2's serializer and parser disagree on
+a nested inherited-namespace case beneath an explicitly namespaced enclosing
+element. [Issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
+contains the dependency-only reproduction and clearing condition. Passing
+explicit/basic inherited namespace cases do not clear this gate; no local
+namespace workaround is implemented.
 
 ## Development
 

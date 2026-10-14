@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Callable, Protocol, TypeVar, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable
 
 from mountainash_structuremap.codecs import ScalarCodec as _ScalarCodec
-from mountainash_structuremap.definitions import RecordDefinition, Scalar
+from mountainash_structuremap.definitions import Alternative, RecordDefinition, Scalar
 
 T = TypeVar("T")
 
@@ -29,6 +30,12 @@ class RecordAdapter(Protocol):
 
 
 
+class VariantAdapter(Protocol):
+    def select(self, value: object) -> tuple[str, object]: ...
+
+    def construct(self, key: str, payload: object) -> object: ...
+
+
 class NativeBinding(Protocol):
     capabilities: CapabilityReport
 
@@ -40,8 +47,17 @@ class NativeBinding(Protocol):
 
     def prepare_scalar(
         self, declaration: Scalar, *, native_type: type | None, format: str | None,
-        column: str, policy: str | None, path: str,
+        column: str, policy: str | None, metadata_namespace: str = "_sm_", path: str,
     ) -> _ScalarCodec: ...
+
+    def prepare_variant(
+        self,
+        alternatives: tuple[Alternative, ...],
+        *,
+        native_types: Mapping[str, type],
+        namespace: str | None = None,
+        path: str,
+    ) -> VariantAdapter: ...
 
 
 @runtime_checkable
@@ -55,4 +71,4 @@ class DocumentBinding(Protocol):
 
 
 
-__all__ = ["CapabilityReport", "DocumentBinding", "NativeBinding", "RecordAdapter"]
+__all__ = ["CapabilityReport", "DocumentBinding", "NativeBinding", "RecordAdapter", "VariantAdapter"]

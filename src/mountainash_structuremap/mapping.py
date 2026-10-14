@@ -12,6 +12,11 @@ class _Canonical(BaseModel):
 _NonEmpty = Annotated[str, StringConstraints(min_length=1)]
 
 
+class AlternativeLayout(_Canonical):
+    table: _NonEmpty | None = None
+    prefix: str | None = None
+
+
 class Naming(_Canonical):
     metadata_namespace: str = "_sm_"
     column_naming: Literal["snake_case", "preserve"] = "snake_case"
@@ -73,6 +78,7 @@ class UseOverride(_Canonical):
     ordered: bool | None = None
     collection_table: CollectionTableStrategy | None = None
     discriminator: DiscriminatorStrategy | None = None
+    alternatives: dict[str, AlternativeLayout] = Field(default_factory=dict)
     variant_layout: Literal["split", "prefixed", "shared", "eav"] | None = None
     role_discriminator: Literal["separate", "combined"] | None = None
     shared_types: Literal["exact", "widen"] | None = None
@@ -113,6 +119,7 @@ __all__ = [
     "DiscriminatorStrategy",
     "KeyStrategy",
     "MappingDefaults",
+    "AlternativeLayout",
     "MappingSpec",
     "Naming",
     "RecordedDiscriminator",

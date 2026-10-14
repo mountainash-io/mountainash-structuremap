@@ -7,11 +7,13 @@ from mountainash_structuremap.errors import StructureMapError
 from mountainash_structuremap.prepared import (
     LinkProgram,
     MapProgram,
+    NullProgram,
     PreparedMapping,
     RecordProgram,
     ScalarProgram,
     SequenceProgram,
     TupleProgram,
+    VariantProgram,
 )
 
 _I64_MIN = -(2**63)
@@ -90,7 +92,15 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
                 pending.extend(child for _, child in reversed(current.members))
             elif isinstance(current, TupleProgram):
                 pending.extend(reversed(current.items))
-
+            elif isinstance(current, VariantProgram):
+                if current.repeated and current.layout == "split":
+                    continue
+                row[current.discriminator_column] = None
+                if current.payload_null_column is not None:
+                    row[current.payload_null_column] = False
+                pending.extend(branch.program for branch in reversed(current.alternatives))
+            elif isinstance(current, NullProgram):
+                continue
     root_program = prepared.programs.get(prepared.root)
     if not isinstance(root_program, RecordProgram):
         raise _data_error(
@@ -135,6 +145,139 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
             if native_value is None and member_plan._nullable_member:
                 continue
             stack.append(("value", member_plan._program, native_value, child_row, child_key, edge.table, -1, None))
+            continue
+        if isinstance(program, VariantProgram):
+            if program.repeated and program.layout == "split":
+                if native_value is None:
+                    if program.nullable:
+                        continue
+                    raise _data_error(
+                        "null_not_allowed",
+                        "Non-nullable variant collection has a null value",
+                        path=program.path,
+                        remedy="Supply a collection or declare the member nullable",
+                    )
+                if program.map_values:
+                    if not isinstance(native_value, dict):
+                        raise _data_error(
+                            "native_shape_mismatch",
+                            "Expected a dictionary",
+                            path=program.path,
+                            remedy="Supply a dictionary",
+                        )
+                    entries: list[tuple[str | None, object]] = []
+                    for map_key, item in native_value.items():
+                        if type(map_key) is not str:
+                            raise _data_error(
+                                "native_type_mismatch",
+                                "Map keys must be strings",
+                                path=program.path,
+                                remedy="Supply string map keys",
+                            )
+                        entries.append((map_key, item))
+                else:
+                    container_type = tuple if program.container == "tuple" else list
+                    if not isinstance(native_value, container_type):
+                        raise _data_error(
+                            "native_shape_mismatch",
+                            f"Expected a {program.container}",
+                            path=program.path,
+                            remedy=f"Supply a {program.container}",
+                        )
+                    entries = [(None, item) for item in native_value]
+                begin(native_value, program.path)
+                stack.append(("exit", program_id, native_value, row, row_key, row_table, -1, None))
+                jobs: list[tuple[int, object, dict[str, Cell], str, str]] = []
+                branch_by_key = {branch.key: branch for branch in program.alternatives}
+                for item_position, (map_key, item) in enumerate(entries):
+                    if item is None:
+                        if not program.nullable_member or program.null_table is None:
+                            raise _data_error(
+                                "null_not_allowed",
+                                "Null variant collection member is not declared",
+                                path=program.path,
+                                remedy="Declare a nullable alternative member",
+                            )
+                        table = program.null_table
+                        child_key = new_key()
+                        child_row = empty_row(table, child_key, row_key)
+                        plan = prepared.tables[table]
+                        if len(plan.parent_tables) > 1:
+                            child_row[prepared.parent_table_column] = row_table
+                        child_row[prepared.position_column] = item_position
+                        if program.map_values:
+                            child_row[prepared.map_key_column] = map_key
+                        child_row[prepared.null_column] = True
+                        child_row[program.discriminator_column] = None
+                        tables[table].append(child_row)
+                        continue
+                    alternative_key, payload = program.adapter.select(item)
+                    branch = branch_by_key.get(alternative_key)
+                    if branch is None or branch.table is None:
+                        raise _data_error(
+                            "unknown_variant",
+                            f"Adapter selected undeclared alternative {alternative_key!r}",
+                            path=program.path,
+                            remedy="Supply a value matching one prepared alternative",
+                        )
+                    if payload is None and not branch.nullable_payload:
+                        raise _data_error(
+                            "invalid_variant_value",
+                            f"Alternative {alternative_key!r} does not allow a null payload",
+                            path=program.path,
+                            remedy="Supply a non-null payload or declare the alternative nullable",
+                        )
+                    table = branch.table
+                    child_key = new_key()
+                    child_row = empty_row(table, child_key, row_key)
+                    plan = prepared.tables[table]
+                    if len(plan.parent_tables) > 1:
+                        child_row[prepared.parent_table_column] = row_table
+                    child_row[prepared.position_column] = item_position
+                    if program.map_values:
+                        child_row[prepared.map_key_column] = map_key
+                    child_row[program.discriminator_column] = branch.tag
+                    if program.payload_null_column is not None:
+                        child_row[program.payload_null_column] = payload is None
+                    tables[table].append(child_row)
+                    if payload is not None:
+                        jobs.append((branch.program, payload, child_row, child_key, table))
+                for branch_program, payload, child_row, child_key, table in reversed(jobs):
+                    stack.append(("value", branch_program, payload, child_row, child_key, table, -1, None))
+                continue
+            if native_value is None:
+                if program.nullable:
+                    null_inline(program_id, row)
+                    continue
+                raise _data_error(
+                    "null_not_allowed",
+                    "Non-nullable variant has a null value",
+                    path=program.path,
+                    remedy="Supply a declared alternative or declare the variant nullable",
+                )
+            alternative_key, payload = program.adapter.select(native_value)
+            branch = next((item for item in program.alternatives if item.key == alternative_key), None)
+            if branch is None or branch.table is not None:
+                raise _data_error(
+                    "unknown_variant",
+                    f"Adapter selected undeclared alternative {alternative_key!r}",
+                    path=program.path,
+                    remedy="Supply a value matching one prepared alternative",
+                )
+            if payload is None and not branch.nullable_payload:
+                raise _data_error(
+                    "invalid_variant_value",
+                    f"Alternative {alternative_key!r} does not allow a null payload",
+                    path=program.path,
+                    remedy="Supply a non-null payload or declare the alternative nullable",
+                )
+            row[program.discriminator_column] = branch.tag
+            if program.payload_null_column is not None:
+                row[program.payload_null_column] = payload is None
+            if payload is not None:
+                stack.append(("value", branch.program, payload, row, row_key, row_table, -1, None))
+            continue
+        if isinstance(program, NullProgram):
             continue
         if isinstance(program, ScalarProgram):
             values = _native_scalar(native_value, program)
@@ -194,7 +337,6 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
                     path=program.path,
                     remedy="Supply a collection or declare the member nullable",
                 )
-            entries: list[tuple[str | None, object]]
             if isinstance(program, SequenceProgram):
                 container_type = tuple if program.container == "tuple" else list
                 if not isinstance(native_value, container_type):

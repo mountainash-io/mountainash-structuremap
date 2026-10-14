@@ -7,7 +7,7 @@ from typing import Generic, Literal, Mapping, TypeVar
 
 from mountainash.typespec.spec import TypeSpec
 
-from mountainash_structuremap.bindings.contracts import CapabilityReport, NativeBinding, RecordAdapter
+from mountainash_structuremap.bindings.contracts import CapabilityReport, NativeBinding, RecordAdapter, VariantAdapter
 from mountainash_structuremap.codecs import ScalarCodec
 
 T = TypeVar("T")
@@ -29,6 +29,15 @@ class RecordProgram:
 
 
 @dataclass(frozen=True)
+class VariantBranch:
+    key: str
+    tag: str
+    program: int
+    table: str | None = None
+    nullable_payload: bool = False
+
+
+@dataclass(frozen=True)
 class SequenceProgram:
     path: str
     table: str
@@ -36,6 +45,27 @@ class SequenceProgram:
     container: Literal["list", "tuple"] = "list"
 
 
+@dataclass(frozen=True)
+class VariantProgram:
+    path: str
+    adapter: VariantAdapter
+    discriminator_column: str
+    alternatives: tuple[VariantBranch, ...]
+    layout: Literal["split", "prefixed"]
+    nullable: bool = False
+    nullable_member: bool = False
+    repeated: bool = False
+    container: Literal["list", "tuple"] = "list"
+    null_table: str | None = None
+    map_values: bool = False
+    payload_null_column: str | None = None
+
+
+
+
+@dataclass(frozen=True)
+class NullProgram:
+    path: str
 @dataclass(frozen=True)
 class MapProgram:
     path: str
@@ -57,7 +87,7 @@ class LinkProgram:
     nullable: bool = False
 
 
-ValueProgram = ScalarProgram | RecordProgram | SequenceProgram | MapProgram | TupleProgram | LinkProgram
+ValueProgram = ScalarProgram | RecordProgram | SequenceProgram | MapProgram | TupleProgram | LinkProgram | VariantProgram | NullProgram
 
 
 @dataclass(frozen=True)
@@ -70,6 +100,7 @@ class TablePlan:
     _program: int = 0
     _kind: Literal["root", "single", "sequence", "map"] = "root"
     _nullable_member: bool = False
+    _position_group: str | None = None
 
     @property
     def typespec(self) -> TypeSpec:

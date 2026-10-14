@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Extend native Pydantic discovery with homogeneous primitive Literal fields and nested Annotated shapes; leave constraints and union normalization to native validation.
+- Qualify shared containers, finite recursion, model composition and recorded Split/Prefixed variants for Pydantic records without changing the shared executor.
 - Add the Pydantic BaseModel native-field vertical slice through the shared prepared executor: canonical member naming, direct reads, captured defaults and native validated reconstruction.
 - Support explicit validated construction for Pydantic record targets while retaining native error causes and rejecting unsupported plain-dataclass validation claims.
 - Reject custom Pydantic initialization and retained extras instead of risking silent canonical-value loss. Require Pydantic 2.11+; document and installed-delivery qualification remain separate.

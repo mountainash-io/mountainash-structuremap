@@ -72,6 +72,7 @@ class PydanticBinding:
                 shape=describe_annotation(
                     annotation, member_path, register,
                     record_predicate=lambda typ: issubclass(typ, BaseModel) or is_dataclass(typ),
+                    allow_literals=True,
                 ),
                 default_kind=default,
             ))

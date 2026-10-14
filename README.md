@@ -289,23 +289,40 @@ Mapping paths use Python member names. For `quantity: int = Field(alias="qty")`,
 paths, retry aliases or change model configuration. Native before-validators must
 accept that canonical input. Native failures retain their exception causes.
 
-The native-field vertical slice covers primitive fields, nested records and
-ordered record lists, aliases/name collisions, captured defaults and native field
-constraints. Direct reads retain fields excluded from native serialization.
-Computed properties are not projected into columns, and supplied-field history
-is not restored. Native validation may normalize reconstructed values.
+The supported data shapes use the shared table compiler and executor:
+
+| Native shape | Supported behavior |
+| --- | --- |
+| Primitive fields | `str`, `bool`, signed-i64 `int`, `float`, nullable values and homogeneous primitive `Literal` annotations. |
+| Records and containers | Nested records, lists, string-key maps, fixed tuples (including empty tuples), and finite recursive membership. Empty/null/all-null values follow Normalize below. |
+| Native model composition | Inherited fields/validators, resolved generic specializations and nested ordinary dataclasses. |
+| Variants | Singular and repeated Split/Prefixed layouts, recorded tags, and Literal-tagged discriminated model unions. Table payload validation precedes native construction. |
+
+`Annotated` metadata is left to native validation, including constraints nested
+inside containers. Literal lowering applies only to BaseModel fields; ordinary
+dataclass Literal fields remain unsupported because their constructors do not
+enforce those constraints. Richer scalar types such as `date`, Decimal, enums and
+binary are not given an implicit representation.
+
+Direct reads retain fields excluded from native serialization and captured
+default/factory values. Computed properties are not projected into columns, and
+supplied-field history is not restored. Native validation may normalize values or
+reselect a union after table dispatch: for example, a recorded string `"456"` can
+become integer `456` under native `int | str` left-to-right validation.
 
 `construction="validated"` is available for Pydantic record targets; it does not
 claim validation for nested plain dataclass constructors. Custom `__init__` models
 are rejected, including nested ones: their initialization can silently discard
 canonical values across native revalidation. Use standard model initialization
 and compatible field/model validators. Retained extras and RootModel remain
-unsupported rather than being silently flattened or discarded.
+unsupported rather than being silently flattened or discarded. Separate
+`validate_native=True`, unvalidated construction and Preserve presence are not
+available for this binding.
 
 Run `hatch run test:python examples/pydantic_roundtrip.py` to see renamed columns,
-reordered delivery, independent table reconstruction and native validation errors.
-Pydantic document APIs, broader shape qualification and installed-delivery
-qualification are separate checkpoints; this slice does not claim them.
+reordered delivery, independent table reconstruction, native validation errors
+and recorded Split variants. Pydantic document APIs and installed-delivery
+qualification remain separate checkpoints; this data binding does not claim them.
 
 ### Native boundary and normalization
 

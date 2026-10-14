@@ -1,6 +1,8 @@
 """Native BaseModel data, renamed columns and independent table reconstruction."""
 from __future__ import annotations
 
+from typing import Annotated, Literal
+
 from pydantic import BaseModel, Field, ValidationError
 
 from mountainash_structuremap import (
@@ -29,6 +31,20 @@ def new_token() -> str:
 class Order(BaseModel):
     items: list[Item]
     token: str = Field(default_factory=new_token)
+
+
+class StockAdded(BaseModel):
+    kind: Literal["added"]
+    quantity: int = Field(ge=1)
+
+
+class StockRemoved(BaseModel):
+    kind: Literal["removed"]
+    reason: str
+
+
+class Inventory(BaseModel):
+    events: list[Annotated[StockAdded | StockRemoved, Field(discriminator="kind")]]
 
 
 def main() -> None:
@@ -68,6 +84,32 @@ def main() -> None:
         print("Native validation rejection:", exc)
     else:
         raise AssertionError("Negative quantity unexpectedly passed native validation")
+
+    variants = MappingSpec(overrides={"events": {
+        "variant_layout": "split",
+        "discriminator": {
+            "strategy": "recorded", "column": "event_type",
+            "values": {"StockAdded": "ADD", "StockRemoved": "REMOVE"},
+        },
+        "alternatives": {
+            "StockAdded": {"table": "additions", "prefix": "added"},
+            "StockRemoved": {"table": "removals", "prefix": "removed"},
+        },
+    }})
+    inventory = reconstruct({
+        "root": [{"_sm_key": "inventory"}],
+        "additions": [{"_sm_key": "a", "_sm_parent": "inventory", "_sm_position": 9,
+                       "event_type": "ADD", "added_kind": "added", "added_quantity": 3}],
+        "removals": [{"_sm_key": "r", "_sm_parent": "inventory", "_sm_position": 2,
+                      "event_type": "REMOVE", "removed_kind": "removed", "removed_reason": "damaged"}],
+    }, prepare(derive(Inventory), variants))
+    assert inventory.events == [
+        StockRemoved(kind="removed", reason="damaged"), StockAdded(kind="added", quantity=3),
+    ]
+    emitted = decompose(inventory, prepare(derive(Inventory), variants))
+    delivered = {name: list(reversed(rows)) for name, rows in emitted.items()}
+    assert reconstruct(delivered, prepare(derive(Inventory), variants)) == inventory
+    print("Recorded Split variants reconstructed:", inventory)
 
 
 if __name__ == "__main__":

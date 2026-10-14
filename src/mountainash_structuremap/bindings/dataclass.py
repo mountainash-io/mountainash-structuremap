@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import MISSING, Field, fields, is_dataclass
 from inspect import signature
 from types import ModuleType, UnionType
-from typing import Any, Literal, Tuple, Union, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, Literal, Tuple, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
 
@@ -237,8 +237,15 @@ def describe_annotation(
     register: Callable[[type, str], str],
     *,
     record_predicate: Callable[[type], bool] = is_dataclass,
+    allow_literals: bool = False,
 ) -> Shape:
+    while get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
     origin, args = get_origin(annotation), get_args(annotation)
+    if origin is Literal and allow_literals and args:
+        literal_type = type(args[0])
+        if literal_type in _SCALARS and all(type(value) is literal_type for value in args):
+            return Scalar(type=_SCALARS[literal_type])
     if isinstance(annotation, type) and annotation in _SCALARS:
         return Scalar(type=_SCALARS[annotation])
     if isinstance(annotation, type) and record_predicate(annotation):
@@ -246,24 +253,35 @@ def describe_annotation(
     if origin in (Union, UnionType):
         choice_types = tuple(arg for arg in args if arg is not type(None))
         choices = tuple(
-            Alternative(key=arg.__name__, shape=describe_annotation(arg, path, register, record_predicate=record_predicate))
+            Alternative(key=arg.__name__, shape=describe_annotation(
+                arg, path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+            ))
             for arg in choice_types
         )
         shape: Shape = choices[0].shape if len(choices) == 1 else Alternatives(choices=choices)
         return Nullable(value=shape) if type(None) in args else shape
     if origin is list and len(args) == 1:
-        return Sequence(item=describe_annotation(args[0], path, register, record_predicate=record_predicate))
+        return Sequence(item=describe_annotation(
+            args[0], path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+        ))
     if origin is dict and len(args) == 2:
         return Map(
-            key=describe_annotation(args[0], path, register, record_predicate=record_predicate),
-            value=describe_annotation(args[1], path, register, record_predicate=record_predicate),
+            key=describe_annotation(
+                args[0], path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+            ),
+            value=describe_annotation(
+                args[1], path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+            ),
         )
     if origin is tuple and annotation is not Tuple and (not args or args[-1] is not Ellipsis):
-        return Positional(items=tuple(describe_annotation(arg, path, register, record_predicate=record_predicate) for arg in args))
+        return Positional(items=tuple(describe_annotation(
+            arg, path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+        ) for arg in args))
     raise StructureMapError(
         "unsupported_annotation",
         f"Unsupported annotation {annotation!r}",
         path=path,
         owner="binding gap",
-        remedy="Use a supported scalar or dataclass annotation",
+        remedy="Use a supported scalar, container or native record annotation; "
+        "BaseModel Literal fields must share one supported primitive type",
     )

@@ -8,6 +8,7 @@ from typing import Literal, TypeVar, cast
 
 from mountainash.typespec.spec import FieldSpec, TypeSpec
 from mountainash.typespec.universal_types import UniversalType
+from pydantic import BaseModel
 
 from mountainash_structuremap.bindings.contracts import RecordAdapter
 from mountainash_structuremap.bindings.selection import select_binding
@@ -225,6 +226,14 @@ def prepare(
             remedy="Derive and prepare with the same binding",
         )
     native_binding = select_binding(model.native_types[model.structure.root], model.binding)
+
+    def _is_pydantic_record(definition: str) -> bool:
+        if native_binding.name != "pydantic":
+            return False
+        native_type = model.native_types.get(definition)
+        return native_type is not None and issubclass(native_type, BaseModel)
+
+
     record_adapters: dict[str, RecordAdapter] = {}
     if validate_native:
         raise StructureMapError(
@@ -243,12 +252,32 @@ def prepare(
             remedy="Use presence='normalize' and positions='strict'",
         )
     global_unavailable = (
-        "construction",
         "role_discriminator",
         "shared_types",
         "json_numbers",
         "duplicate_members",
     )
+    construction = mapping.defaults.construction
+    if construction is not None:
+        if construction != "validated":
+            raise StructureMapError(
+                "unavailable_capability",
+                "Unvalidated construction is not available in this delivery",
+                owner="binding gap",
+                path="construction",
+                remedy="Use construction='validated' for Pydantic model records or omit the request",
+            )
+        if any(
+            not _is_pydantic_record(definition)
+            for definition in model.structure.definitions
+        ):
+            raise StructureMapError(
+                "unavailable_capability",
+                "Validated construction is available only for Pydantic model records",
+                owner="binding gap",
+                path="construction",
+                remedy="Use standard-initialization Pydantic records throughout the mapping or omit construction",
+            )
     for policy in global_unavailable:
         if getattr(mapping.defaults, policy) is not None:
             raise StructureMapError(
@@ -282,7 +311,7 @@ def prepare(
     if mapping.defaults.value_space is not None and model.binding != "xsdata":
         raise StructureMapError(
             "unavailable_capability",
-            "The value_space policy is unavailable for the dataclass binding",
+            f"The value_space policy is unavailable for the {model.binding} binding",
             owner="binding gap",
             path="value_space",
             remedy="Omit value_space or use the xsdata binding",
@@ -294,6 +323,20 @@ def prepare(
         while isinstance(shape, (Nullable, Sequence, Map)):
             shape = shape.item if isinstance(shape, Sequence) else shape.value
         return shape
+
+    def record_targets(shape: Shape) -> set[str] | None:
+        shape = collection_payload(shape)
+        if isinstance(shape, RecordRef):
+            return {shape.definition}
+        if isinstance(shape, Alternatives):
+            definitions: set[str] = set()
+            for choice in shape.choices:
+                choice_targets = record_targets(choice.shape)
+                if choice_targets is None:
+                    return None
+                definitions.update(choice_targets)
+            return definitions or None
+        return None
 
     def target(path: str) -> list[tuple[str, Shape]]:
         if not path:
@@ -361,7 +404,8 @@ def prepare(
             owner="binding gap",
             path=path,
             remedy={
-                "presence": "Use presence='normalize'; plain dataclasses cannot retain supplied-field presence",
+                "construction": "Use construction='validated' for Pydantic model records or omit the request",
+                "presence": "Use presence='normalize'; this delivery does not retain supplied-field presence",
                 "positions": "Use positions='strict'; lenient reconstruction is unavailable in Foundation",
                 "key": "Use key='generated'; source-backed keys are unavailable in Foundation",
                 "ordered": "Use ordered=True; unordered collections are unavailable in Foundation",
@@ -456,6 +500,32 @@ def prepare(
         for policy in global_unavailable:
             if getattr(override, policy) is not None:
                 unavailable(path, policy)
+        if override.construction is not None:
+            if override.construction != "validated":
+                unavailable(path, "construction")
+
+            target_definitions: set[str] = set()
+            for candidate_kind, candidate_shape in targets:
+                candidate_definitions = record_targets(candidate_shape)
+                if (
+                    candidate_definitions is None
+                    or candidate_kind not in ("root", "record", "link", "variant", "collection")
+                ):
+                    raise StructureMapError(
+                        "inapplicable_override",
+                        "Construction policies apply only to native record uses",
+                        path=path,
+                        remedy="Set construction on a Pydantic model record use",
+                    )
+                target_definitions.update(candidate_definitions)
+            if any(not _is_pydantic_record(definition) for definition in target_definitions):
+                raise StructureMapError(
+                    "unavailable_capability",
+                    "Validated construction is available only for Pydantic model records",
+                    owner="binding gap",
+                    path=path,
+                    remedy="Use a standard-initialization Pydantic model record or omit construction",
+                )
         if override.open_content is not None:
             if model.binding != "xsdata" or override.open_content not in ("fragment", "reject"):
                 unavailable(path, "open_content")

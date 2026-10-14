@@ -1,6 +1,6 @@
 # Mountainash StructureMap
 
-Transform native Python dataclass and xsdata XML models into typed in-memory tables and reconstruct them independently.
+Transform native Python dataclass, Pydantic BaseModel and xsdata XML models into typed in-memory tables and reconstruct them independently.
 
 ## Example
 
@@ -275,6 +275,38 @@ namespace declarations, source prefixes, source lexemes or original bytes.
 The combined XML example exercises choices, exact numbers, temporal offsets and
 mixed fragments in one document.
 
+### Pydantic model data
+
+Ordinary Pydantic `BaseModel` record classes select the native binding automatically;
+`derive(Model, binding="pydantic")` selects it explicitly. Field discovery uses
+`model_fields`, reads use attributes, and reconstruction uses native validated
+construction through the same prepared table executor.
+
+Mapping paths use Python member names. For `quantity: int = Field(alias="qty")`,
+`UseOverride(column="quantity_count")` maps `quantity` to the table column
+`quantity_count`. Reconstruction passes canonical member dictionaries to
+`model_validate(..., by_name=True, by_alias=False)`; it does not synthesize alias
+paths, retry aliases or change model configuration. Native before-validators must
+accept that canonical input. Native failures retain their exception causes.
+
+The native-field vertical slice covers primitive fields, nested records and
+ordered record lists, aliases/name collisions, captured defaults and native field
+constraints. Direct reads retain fields excluded from native serialization.
+Computed properties are not projected into columns, and supplied-field history
+is not restored. Native validation may normalize reconstructed values.
+
+`construction="validated"` is available for Pydantic record targets; it does not
+claim validation for nested plain dataclass constructors. Custom `__init__` models
+are rejected, including nested ones: their initialization can silently discard
+canonical values across native revalidation. Use standard model initialization
+and compatible field/model validators. Retained extras and RootModel remain
+unsupported rather than being silently flattened or discarded.
+
+Run `hatch run test:python examples/pydantic_roundtrip.py` to see renamed columns,
+reordered delivery, independent table reconstruction and native validation errors.
+Pydantic document APIs, broader shape qualification and installed-delivery
+qualification are separate checkpoints; this slice does not claim them.
+
 ### Native boundary and normalization
 
 The plain-dataclass binding supports introspection, reading and construction,
@@ -306,8 +338,8 @@ presence preservation and other binding-specific strategies are not executable.
 Preparation refuses those requests. The canonical definitions and policy
 declarations can describe more than this executor supports.
 
-Native Pydantic/JSON bindings, YAML/JSON authoring, Parquet output and incremental
-execution are separate work.
+Pydantic document parsing/serialization, YAML/JSON authoring, Parquet output and
+incremental execution are separate work.
 
 The former namespace blocker in
 [issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
@@ -319,7 +351,7 @@ models; generator use is test setup, not framework functionality.
 ## Development
 
 Requires Python 3.12+, Git and Hatch 1.14+; Hatch manages its configured uv
-installer. Canonical models use Pydantic 2.5+.
+installer. The package requires Pydantic 2.11+ for native name-only validation.
 
 Mountainash is sourced directly from GitHub at a pinned commit on `develop`:
 `c98f35ace19562dac0612fdd9f6c580a59bdc5f8`. The dependency in `pyproject.toml`

@@ -37,6 +37,7 @@ class VariantAdapter(Protocol):
 
 
 class NativeBinding(Protocol):
+    name: str
     capabilities: CapabilityReport
 
     def describe_record(

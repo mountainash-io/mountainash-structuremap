@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add the Pydantic BaseModel native-field vertical slice through the shared prepared executor: canonical member naming, direct reads, captured defaults and native validated reconstruction.
+- Support explicit validated construction for Pydantic record targets while retaining native error causes and rejecting unsupported plain-dataclass validation claims.
+- Reject custom Pydantic initialization and retained extras instead of risking silent canonical-value loss. Require Pydantic 2.11+; document and installed-delivery qualification remain separate.
 - Add Fragment/Reject policies for native XML wildcards, mixed content, compound wildcard choices and attribute wildcards, with per-use policy precedence.
 - Preserve standalone fragment namespace context, typed choice names, generic text/tails and singular wildcard aggregates. Validate fragment syntax and occurrence roles without application constructors before native binding.
 - Qualify supplied generated models and combined XML documents through source execution and isolated XML/base-only wheels, including independent recursive/Split/fragment tables and portable fresh-process scalar carriers.

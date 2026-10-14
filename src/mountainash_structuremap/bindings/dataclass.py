@@ -35,6 +35,7 @@ _SCALARS: dict[type, Literal["str", "int", "float", "bool"]] = {
 
 
 class DataclassBinding:
+    name = "dataclass"
     capabilities = CapabilityReport()
 
     def describe_record(self, cls: type, register: Callable[[type, str], str], *, path: str) -> RecordDefinition:
@@ -71,7 +72,8 @@ class DataclassBinding:
             default: Literal["factory", "value", "required"] = (
                 "factory" if item.default_factory is not MISSING else "value" if item.default is not MISSING else "required"
             )
-            members.append(Member(name=item.name, shape=describe_annotation(hints[item.name], member_path, register),
+            members.append(Member(name=item.name, shape=describe_annotation(hints[item.name], member_path, register,
+                                                                              record_predicate=lambda value: is_dataclass(value)), 
                                   default_kind=default))
         return RecordDefinition(name=f"{cls.__module__}.{cls.__qualname__}", members=tuple(members))
 
@@ -229,34 +231,35 @@ def validate_constructor(cls: type, member_names: tuple[str, ...], *, path: str)
             remedy="Use a constructor accepting the mapped field keywords, with defaults for constructor-only arguments",
         ) from exc
 
-
 def describe_annotation(
     annotation: object,
     path: str,
     register: Callable[[type, str], str],
+    *,
+    record_predicate: Callable[[type], bool] = is_dataclass,
 ) -> Shape:
     origin, args = get_origin(annotation), get_args(annotation)
     if isinstance(annotation, type) and annotation in _SCALARS:
         return Scalar(type=_SCALARS[annotation])
-    if isinstance(annotation, type) and is_dataclass(annotation):
+    if isinstance(annotation, type) and record_predicate(annotation):
         return RecordRef(definition=register(annotation, path))
     if origin in (Union, UnionType):
         choice_types = tuple(arg for arg in args if arg is not type(None))
         choices = tuple(
-            Alternative(key=arg.__name__, shape=describe_annotation(arg, path, register))
+            Alternative(key=arg.__name__, shape=describe_annotation(arg, path, register, record_predicate=record_predicate))
             for arg in choice_types
         )
         shape: Shape = choices[0].shape if len(choices) == 1 else Alternatives(choices=choices)
         return Nullable(value=shape) if type(None) in args else shape
     if origin is list and len(args) == 1:
-        return Sequence(item=describe_annotation(args[0], path, register))
+        return Sequence(item=describe_annotation(args[0], path, register, record_predicate=record_predicate))
     if origin is dict and len(args) == 2:
         return Map(
-            key=describe_annotation(args[0], path, register),
-            value=describe_annotation(args[1], path, register),
+            key=describe_annotation(args[0], path, register, record_predicate=record_predicate),
+            value=describe_annotation(args[1], path, register, record_predicate=record_predicate),
         )
     if origin is tuple and annotation is not Tuple and (not args or args[-1] is not Ellipsis):
-        return Positional(items=tuple(describe_annotation(arg, path, register) for arg in args))
+        return Positional(items=tuple(describe_annotation(arg, path, register, record_predicate=record_predicate) for arg in args))
     raise StructureMapError(
         "unsupported_annotation",
         f"Unsupported annotation {annotation!r}",

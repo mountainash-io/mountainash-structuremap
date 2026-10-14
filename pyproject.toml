@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "mountainash @ git+https://github.com/mountainash-io/mountainash.git@c98f35ace19562dac0612fdd9f6c580a59bdc5f8",
-  "pydantic>=2.5,<3",
+  "pydantic>=2.11,<3",
 ]
 
 [project.optional-dependencies]

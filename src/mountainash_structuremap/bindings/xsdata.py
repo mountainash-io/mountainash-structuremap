@@ -61,6 +61,7 @@ _SCALARS: dict[type, Literal[
 
 
 class XsdataBinding(NativeBinding, DocumentBinding):
+    name = "xsdata"
     capabilities = CapabilityReport(Parse=True, Serialize=True)
 
     def __init__(self) -> None:

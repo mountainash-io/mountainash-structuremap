@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import fields, is_dataclass
 from typing import Any
 
+from pydantic import BaseModel
+
 from mountainash_structuremap.bindings.contracts import NativeBinding
 from mountainash_structuremap.bindings.dataclass import DataclassBinding
 from mountainash_structuremap.errors import StructureMapError
@@ -34,6 +36,15 @@ def _has_xml_metadata(root_type: type[Any]) -> bool:
 
 
 def select_binding(root_type: type, binding: str | None = None) -> NativeBinding:
+    if isinstance(root_type, type) and issubclass(root_type, BaseModel):
+        if binding in (None, "pydantic"):
+            from mountainash_structuremap.bindings.pydantic import PydanticBinding
+
+            return PydanticBinding()
+        raise StructureMapError(
+            "unavailable_binding", "Pydantic model requires the pydantic binding",
+            owner="binding gap", remedy="Use binding='pydantic'",
+        )
     selected = binding if binding is not None else ("xsdata" if _has_xml_metadata(root_type) else "dataclass")
     if selected == "dataclass":
         return DataclassBinding()

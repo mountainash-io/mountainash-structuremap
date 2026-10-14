@@ -104,20 +104,6 @@ def test_optional_inline_record_with_descendants_is_not_discarded():
     assert rebuilt == Entry(History([2, 2, 7]))
 
 
-def test_detected_xml_metadata_requires_its_native_binding():
-    import pytest
-
-    from mountainash_structuremap import StructureMapError, derive
-
-    @dataclass
-    class XmlRecord:
-        name: str = field(metadata={"type": "Attribute"})
-
-    with pytest.raises(StructureMapError) as caught:
-        derive(XmlRecord)
-    assert caught.value.code == "unavailable_binding"
-
-
 def test_postponed_annotations_resolve_nested_records_and_class_local_aliases():
     from mountainash_structuremap import decompose, derive, prepare, reconstruct
     from tests.fixtures.postponed_models import NestedDocument

@@ -1,7 +1,9 @@
+
 [envs.test]
 python = "3.12"
 installer = "uv"
 skip-install = false
+features = ["xml"]
 dependencies = [
   "pytest>=8",
   "hatch>=1.14",
@@ -21,10 +23,12 @@ dependencies = ["ruff"]
 [envs.ruff.scripts]
 check = "ruff check src tests examples"
 
+
 [envs.mypy]
 python = "3.12"
 installer = "uv"
 skip-install = false
+features = ["xml"]
 dependencies = ["mypy"]
 
 [envs.mypy.scripts]

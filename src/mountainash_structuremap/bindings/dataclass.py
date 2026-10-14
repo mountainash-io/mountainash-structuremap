@@ -1,19 +1,24 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import Field, fields, is_dataclass
+import sys
+from collections.abc import Callable, Mapping
+from dataclasses import MISSING, Field, fields, is_dataclass
 from inspect import signature
-from types import UnionType
-from typing import Any, Literal, Tuple, Union, get_args, get_origin
+from types import ModuleType, UnionType
+from typing import Any, Literal, Tuple, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
 
-from mountainash_structuremap.bindings.contracts import CapabilityReport
+from mountainash_structuremap.bindings.contracts import CapabilityReport, VariantAdapter
+from mountainash_structuremap.codecs import PrimitiveCodec
 from mountainash_structuremap.definitions import (
+    Alternative,
     Alternatives,
     Map,
+    Member,
     Nullable,
     Positional,
+    RecordDefinition,
     RecordRef,
     Scalar,
     Sequence,
@@ -27,70 +32,170 @@ _SCALARS: dict[type, Literal["str", "int", "float", "bool"]] = {
     float: "float",
     bool: "bool",
 }
-_XML_TYPES = {"Text", "Element", "Elements", "Attribute", "Attributes", "Wildcard", "Ignore"}
-_XML_FIELDS = {
-    "name",
-    "namespace",
-    "nillable",
-    "required",
-    "sequence",
-    "tokens",
-    "format",
-    "choices",
-    "wrapper",
-    "mixed",
-    "process_contents",
-}
-_XML_META = {
-    "name",
-    "namespace",
-    "nillable",
-    "target_namespace",
-    "global_type",
-    "element_name_generator",
-    "attribute_name_generator",
-}
 
 
 class DataclassBinding:
     capabilities = CapabilityReport()
 
+    def describe_record(self, cls: type, register: Callable[[type, str], str], *, path: str) -> RecordDefinition:
+        if issubclass(cls, BaseModel):
+            raise StructureMapError(
+                "unavailable_binding", "This class requires the Pydantic binding", path=path,
+                owner="binding gap", remedy="The native Pydantic binding is not available in this delivery",
+            )
+        declared = record_fields(cls, path=path)
+        field_names = {item.name for item in declared}
+        hints: dict[str, object] = {}
+        try:
+            for base in reversed(cls.__mro__):
+                annotations = {name: value for name, value in vars(base).get("__annotations__", {}).items()
+                               if name in field_names}
+                if not annotations:
+                    continue
+                scope = ModuleType(base.__module__)
+                scope.__annotations__ = annotations
+                module = sys.modules.get(base.__module__)
+                lexical_scope = base.__qualname__.rpartition(".")[0]
+                known = {candidate.__name__: candidate for candidate in getattr(self, "_native_types", {}).values()
+                         if lexical_scope and candidate.__module__ == base.__module__
+                         and candidate.__qualname__.rpartition(".")[0] == lexical_scope}
+                hints.update(get_type_hints(scope, globalns=vars(module) if module else {},
+                                            localns={**known, **vars(base), base.__name__: base}))
+        except Exception as exc:
+            raise StructureMapError("annotation_resolution_failed", "Could not resolve dataclass annotations",
+                                    path=path, owner="binding gap",
+                                    remedy="Make forward-referenced classes available in their declaring module or class namespace") from exc
+        members = []
+        for item in declared:
+            member_path = "/".join(filter(None, (path, item.name)))
+            default: Literal["factory", "value", "required"] = (
+                "factory" if item.default_factory is not MISSING else "value" if item.default is not MISSING else "required"
+            )
+            members.append(Member(name=item.name, shape=describe_annotation(hints[item.name], member_path, register),
+                                  default_kind=default))
+        return RecordDefinition(name=f"{cls.__module__}.{cls.__qualname__}", members=tuple(members))
+
+    def prepare_record(self, cls: type, definition: RecordDefinition, *, path: str) -> DataclassRecordAdapter:
+        validate_constructor(cls, tuple(member.name for member in definition.members), path=path)
+        return DataclassRecordAdapter(cls)
+    def prepare_scalar(
+        self,
+        declaration: Scalar,
+        *,
+        native_type: type | None,
+        format: str | None,
+        column: str,
+        policy: str | None,
+        metadata_namespace: str = "_sm_",
+        path: str,
+        field_context: tuple[type, str, str | None] | None = None,
+    ) -> PrimitiveCodec:
+        if declaration.type not in ("str", "int", "float", "bool"):
+            raise StructureMapError("unavailable_scalar", f"Scalar {declaration.type!r} is unavailable",
+                                    path=path, owner="binding gap", remedy="Use a supported primitive scalar")
+        return PrimitiveCodec(declaration.type, column, path)
+
+    def prepare_variant(
+        self,
+        alternatives: tuple[Alternative, ...],
+        *,
+        native_types: Mapping[str, type],
+        namespace: str | None = None,
+        path: str,
+    ) -> VariantAdapter:
+        types: dict[str, type] = {}
+        for alternative in alternatives:
+            shape = alternative.shape
+            while isinstance(shape, Nullable):
+                shape = shape.value
+            native_type: type | None = None
+            if isinstance(shape, RecordRef):
+                native_type = native_types.get(shape.definition)
+            elif isinstance(shape, Scalar):
+                native_type = native_types.get(shape.native_type) if shape.native_type else {
+                    "str": str,
+                    "bool": bool,
+                    "int": int,
+                    "float": float,
+                }.get(shape.type)
+            if native_type is None:
+                raise StructureMapError(
+                    "unsupported_variant",
+                    f"Cannot associate alternative {alternative.key!r} with a native dataclass type",
+                    path=path,
+                    owner="binding gap",
+                    remedy="Use distinct supported dataclass or primitive alternatives",
+                )
+            if native_type in types.values():
+                previous = next(key for key, value in types.items() if value is native_type)
+                raise StructureMapError(
+                    "ambiguous_variant",
+                    f"Alternatives {previous!r} and {alternative.key!r} share native type {native_type.__name__}",
+                    path=path,
+                    owner="binding gap",
+                    remedy="Use distinct native alternative types",
+                )
+            types[alternative.key] = native_type
+        return DataclassVariantAdapter(types, path)
+
+
+
+
+
+class DataclassVariantAdapter:
+    def __init__(self, native_types: Mapping[str, type], path: str):
+        self._types = dict(native_types)
+        self._keys = {native_type: key for key, native_type in native_types.items()}
+        self._path = path
+
+    def select(self, value: object) -> tuple[str, object]:
+        key = self._keys.get(type(value))
+        if key is None:
+            raise StructureMapError(
+                "unknown_variant",
+                f"Runtime type {type(value).__name__!r} is not a declared alternative",
+                path=self._path,
+                owner="executor restriction",
+                remedy="Supply an instance of one declared variant alternative",
+            )
+        return key, value
+
+    def construct(self, key: str, payload: object) -> object:
+        if key not in self._types:
+            raise StructureMapError(
+                "invalid_discriminator",
+                f"Alternative key {key!r} is not declared",
+                path=self._path,
+                owner="executor restriction",
+                remedy="Use a discriminator for one declared alternative",
+            )
+        return payload
+
+
+class DataclassRecordAdapter:
+    def __init__(self, native_type: type):
+        self.native_type = native_type
+
     def read(self, instance: object, member: str, *, path: str) -> object:
         try:
-            value: object = getattr(instance, member)
-            return value
+            return getattr(instance, member)
         except Exception as exc:
             raise StructureMapError(
-                "native_read_failed",
-                "Could not read dataclass member",
-                path=path,
-                owner="native limitation",
-                remedy="Provide a readable dataclass member",
+                "native_read_failed", "Could not read dataclass member", path=path,
+                owner="native limitation", remedy="Provide a readable dataclass member",
             ) from exc
 
-    def construct(self, cls: type, values: dict[str, object], *, path: str) -> object:
+    def construct(self, values: dict[str, object], *, path: str) -> object:
         try:
-            result: object = cls(**values)
-            return result
+            return self.native_type(**values)
         except Exception as exc:
             raise StructureMapError(
-                "native_construct_failed",
-                "Dataclass construction failed",
-                path=path,
-                owner="native limitation",
-                remedy="Ensure supplied values satisfy the native constructor",
+                "native_construct_failed", "Dataclass construction failed", path=path,
+                owner="native limitation", remedy="Ensure supplied values satisfy the native constructor",
             ) from exc
 
 
-def record_fields(cls: type, *, detected: bool, path: str) -> tuple[Field[Any], ...]:
-    if detected and issubclass(cls, BaseModel):
-        raise StructureMapError(
-            "unavailable_binding",
-            "This class requires the Pydantic binding",
-            path=path,
-            owner="binding gap",
-            remedy="The native Pydantic binding is not available in this delivery",
-        )
+def record_fields(cls: type, *, path: str) -> tuple[Field[Any], ...]:
     if not is_dataclass(cls):
         raise StructureMapError(
             "unsupported_binding",
@@ -99,22 +204,7 @@ def record_fields(cls: type, *, detected: bool, path: str) -> tuple[Field[Any], 
             owner="binding gap",
             remedy="Pass a plain dataclass class",
         )
-    members = fields(cls)
-    meta = getattr(cls, "Meta", None)
-    xml = any(hasattr(meta, key) for key in _XML_META) or any(
-        bool(_XML_FIELDS.intersection(item.metadata))
-        or (isinstance(item.metadata.get("type"), str) and item.metadata["type"] in _XML_TYPES)
-        for item in members
-    )
-    if detected and xml:
-        raise StructureMapError(
-            "unavailable_binding",
-            "XML-shaped metadata requires the xsdata binding",
-            path=path,
-            owner="binding gap",
-            remedy="The xsdata binding is unavailable; declare binding='dataclass' only if this metadata is not XML",
-        )
-    return members
+    return fields(cls)
 
 
 def validate_constructor(cls: type, member_names: tuple[str, ...], *, path: str) -> None:
@@ -151,8 +241,12 @@ def describe_annotation(
     if isinstance(annotation, type) and is_dataclass(annotation):
         return RecordRef(definition=register(annotation, path))
     if origin in (Union, UnionType):
-        choices = tuple(describe_annotation(arg, path, register) for arg in args if arg is not type(None))
-        shape: Shape = choices[0] if len(choices) == 1 else Alternatives(choices=choices)
+        choice_types = tuple(arg for arg in args if arg is not type(None))
+        choices = tuple(
+            Alternative(key=arg.__name__, shape=describe_annotation(arg, path, register))
+            for arg in choice_types
+        )
+        shape: Shape = choices[0].shape if len(choices) == 1 else Alternatives(choices=choices)
         return Nullable(value=shape) if type(None) in args else shape
     if origin is list and len(args) == 1:
         return Sequence(item=describe_annotation(args[0], path, register))

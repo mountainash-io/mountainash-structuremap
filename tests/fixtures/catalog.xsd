@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:c="urn:structuremap:catalog" targetNamespace="urn:structuremap:catalog"
+           elementFormDefault="qualified">
+  <xs:simpleType name="Amount">
+    <xs:restriction base="xs:decimal">
+      <xs:totalDigits value="20"/>
+      <xs:fractionDigits value="3"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:complexType name="Entry">
+    <xs:sequence>
+      <xs:element name="amount" type="c:Amount"/>
+      <xs:element name="serial" type="xs:integer"/>
+      <xs:element name="when" type="xs:dateTime"/>
+      <xs:element name="child" type="c:Entry" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="code" type="xs:string" use="required"/>
+  </xs:complexType>
+  <xs:complexType name="Note" mixed="true">
+    <xs:sequence>
+      <xs:any namespace="##other" processContents="skip" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="catalog">
+    <xs:complexType>
+      <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="entry" type="c:Entry"/>
+        <xs:element name="note" type="c:Note"/>
+      </xs:choice>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

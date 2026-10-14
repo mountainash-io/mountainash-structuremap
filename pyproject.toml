@@ -13,6 +13,10 @@ dependencies = [
   "pydantic>=2.5,<3",
 ]
 
+[project.optional-dependencies]
+xml = ["xsdata==26.2"]
+
+
 [tool.hatch.metadata]
 allow-direct-references = true
 

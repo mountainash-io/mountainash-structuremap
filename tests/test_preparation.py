@@ -137,17 +137,6 @@ def test_plain_dataclass_validation_is_not_advertised_as_native_validation():
     assert caught.value.code == "unavailable_capability"
 
 
-def test_multi_type_union_remains_inspectable_but_cannot_be_prepared():
-    @dataclass
-    class Choice:
-        value: str | int
-
-    model = derive(Choice)
-    with pytest.raises(StructureMapError) as caught:
-        prepare(model)
-    assert caught.value.code == "unavailable_construct"
-    assert caught.value.path == "value"
-
 
 @pytest.mark.parametrize("constructor", ["init_false", "initvar", "custom"])
 def test_unsupported_constructors_are_refused_during_preparation_not_derivation(constructor):
@@ -244,9 +233,6 @@ def test_unrelated_metadata_and_explicit_plain_binding_do_not_claim_xml():
 
     plain = prepare(derive(Plain))
     assert reconstruct(decompose(Plain("x"), plain), plain) == Plain("x")
-    with pytest.raises(StructureMapError) as caught:
-        derive(Marked)
-    assert caught.value.code == "unavailable_binding"
     explicit = prepare(derive(Marked, binding="dataclass"))
     assert reconstruct(decompose(Marked("x"), explicit), explicit) == Marked("x")
 

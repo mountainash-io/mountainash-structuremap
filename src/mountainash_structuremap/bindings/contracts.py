@@ -48,6 +48,7 @@ class NativeBinding(Protocol):
     def prepare_scalar(
         self, declaration: Scalar, *, native_type: type | None, format: str | None,
         column: str, policy: str | None, metadata_namespace: str = "_sm_", path: str,
+        field_context: tuple[type, str, str | None] | None = None,
     ) -> _ScalarCodec: ...
 
     def prepare_variant(

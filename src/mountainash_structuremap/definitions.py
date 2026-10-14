@@ -34,7 +34,7 @@ class Scalar(Declaration):
     kind: Literal["scalar"] = "scalar"
     type: Literal[
         "str", "int", "float", "bool", "decimal", "date", "time", "datetime",
-        "duration", "period", "binary", "qname", "enum"
+        "duration", "period", "binary", "qname", "enum", "fragment"
     ]
     native_type: str | None = None
     facets: NumericFacets | None = None

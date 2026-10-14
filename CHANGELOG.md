@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add Fragment/Reject policies for native XML wildcards, mixed content, compound wildcard choices and attribute wildcards, with per-use policy precedence.
+- Preserve standalone fragment namespace context, typed choice names, generic text/tails and singular wildcard aggregates. Validate fragment syntax and occurrence roles without application constructors before native binding.
+- Qualify supplied generated models and combined XML documents through source execution and isolated XML/base-only wheels, including independent recursive/Split/fragment tables and portable fresh-process scalar carriers.
 - Add shared Split/Prefixed alternatives for singular, list and map uses, with recorded discriminators, per-alternative naming, finite recursive roles and complete inactive-payload/reachability checks before construction.
 - Preserve supported native XML element choices, local unions, `xsi:type` substitutions, selected nil payloads and token-choice QNames. Freeze native associations at preparation and reject unsupported ambiguity.
 - Add exact Decimal/facet and unbounded-integer codecs, explicit Typed/Lexical policies, canonical XML temporal/binary/QName conversion and frozen scalar-enum selection.

@@ -88,6 +88,7 @@ class DataclassBinding:
         policy: str | None,
         metadata_namespace: str = "_sm_",
         path: str,
+        field_context: tuple[type, str, str | None] | None = None,
     ) -> PrimitiveCodec:
         if declaration.type not in ("str", "int", "float", "bool"):
             raise StructureMapError("unavailable_scalar", f"Scalar {declaration.type!r} is unavailable",

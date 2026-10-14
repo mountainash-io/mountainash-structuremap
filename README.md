@@ -231,6 +231,50 @@ overrides. Prepared declarations also support Mountainash Frictionless
 persistence and Arrow schema/value conversion; this does not add a file writer.
 
 
+### XML open content
+
+`open_content="fragment"` preserves native wildcard and mixed-content values.
+It is the default for xsdata open fields. Set `open_content="reject"` to refuse
+those fields during preparation. A field-level `UseOverride` takes precedence
+over the mapping default; `structured` and `drop` are unavailable.
+
+| Native field | Fragment representation |
+|---|---|
+| Repeated wildcard or mixed content | One STRING cell per retained native occurrence, with ordinary collection keys and positions. |
+| Compound choices containing wildcards | Opaque fragment occurrences retaining declared choice QNames/types and admitted open elements. |
+| Singular wildcard | One cell, including a native nameless `AnyElement` that aggregates several children. Nullable absence remains null. |
+| Attribute wildcard | One cell containing the complete retained attribute mapping. |
+
+Each cell is a complete XML document rooted at
+`{urn:mountainash:structuremap:fragment}fragment`. The codec owns this envelope;
+it is not an application model. For independently authored mixed-content rows,
+text and empty text are represented as follows:
+
+```xml
+<sm:fragment xmlns:sm="urn:mountainash:structuremap:fragment">text</sm:fragment>
+<sm:fragment xmlns:sm="urn:mountainash:structuremap:fragment"/>
+```
+
+Element fragments retain nested text, generic element tails, expanded names,
+attributes and available QName namespace context. Typed elements and their outer
+trailing text occupy separate native mixed-content occurrences and therefore
+separate rows; a typed fragment cell containing an outer tail is rejected.
+Repeated fields reject multiple occurrences in one envelope. Mixed fields must
+use a native `list[object]` or `tuple[object, ...]`; scalar mixed annotations are
+refused with that model configuration guidance.
+
+Fragment syntax and role checks use a package-restricted generic xsdata parser
+that cannot discover application classes. Metadata-only checks resolve typed
+tail admissibility without constructing parser nodes or invoking factories.
+Application XML binding runs only after all table, position and reachability
+checks pass. Native constructor failures during that final binding retain their
+causes and cannot roll back application side effects.
+
+The contract preserves what xsdata retains. It does not recover discarded
+namespace declarations, source prefixes, source lexemes or original bytes.
+The combined XML example exercises choices, exact numbers, temporal offsets and
+mixed fragments in one document.
+
 ### Native boundary and normalization
 
 The plain-dataclass binding supports introspection, reading and construction,
@@ -262,16 +306,15 @@ presence preservation and other binding-specific strategies are not executable.
 Preparation refuses those requests. The canonical definitions and policy
 declarations can describe more than this executor supports.
 
-Wildcard/mixed fragments remain later Phase 2 work. Native Pydantic/JSON bindings,
-YAML/JSON authoring, Parquet output and incremental execution are separate work.
-The current XML slice is not complete Phase 2 qualification.
+Native Pydantic/JSON bindings, YAML/JSON authoring, Parquet output and incremental
+execution are separate work.
 
-Checkpoint B awaits owner review. The former namespace blocker in
+The former namespace blocker in
 [issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
 was withdrawn: models generated for that namespace structure passed native and
 StructureMap round-trips. The failing handwritten fixture omitted namespace
-metadata emitted by the generator. Broader XML integration qualification remains
-open; generator use in qualification is test setup, not framework functionality.
+metadata emitted by the generator. Qualification includes supplied generated
+models; generator use is test setup, not framework functionality.
 
 ## Development
 
@@ -303,12 +346,16 @@ a fresh preparation. No central documentation checkout is needed to build or
 run this package. Product work uses feature branches targeting protected
 `develop`; releases go through a release branch to `main`.
 
-The wheel smoke builds a new wheel and installs it with its declared dependencies
-into a temporary virtual environment. It checks installed-package imports,
-TypeSpecs and independently authored rows, then transfers primitive tables from
-a recursive writer to a separate reader process. Both run outside the checkout
-with Python isolated mode; only the copied fixture directory is added to their
-import paths. Temporary environments and transport files are removed afterward.
+The wheel smoke builds a new wheel and installs `[xml]` and base-only packages in
+separate temporary environments, checking dependencies with `pip check`.
+The XML run reconstructs independently authored Split, recursive and fragment
+tables. Separate isolated writer/reader processes transfer portable declarations,
+mapping, TypeSpecs and actual Decimal/date/time/datetime table carriers.
+Assertions distinguish absent offsets from explicit UTC. Base-only execution
+proves dataclass support and actionable detected/explicit missing-XML errors.
+All runs use the installed package outside the checkout; only copied application
+fixtures are added to the import path. Temporary environments and transport
+files are removed afterward.
 
 CI runs `foundation-tests`, `foundation-wheel`, `foundation-lint` and
 `foundation-types`. Source, wheel and CI qualification use the same Mountainash

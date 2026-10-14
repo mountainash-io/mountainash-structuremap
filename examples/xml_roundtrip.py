@@ -54,6 +54,27 @@ class Measurements:
     local: XmlDateTime = field(metadata={"type": "Element"})
 
 
+@dataclass
+class Commentary:
+    content: list[object] = field(default_factory=list, metadata={
+        "type": "Wildcard", "namespace": "##any", "mixed": True,
+    })
+
+
+@dataclass
+class Report:
+    class Meta:
+        name = "report"
+        namespace = NS
+
+    measurements: Measurements = field(metadata={"type": "Element", "namespace": NS})
+    commentary: Commentary = field(metadata={"type": "Element", "namespace": NS})
+    pets: list[object] = field(default_factory=list, metadata={"type": "Elements", "choices": (
+        {"name": "dog", "namespace": NS, "type": Dog},
+        {"name": "cat", "namespace": NS, "type": Cat},
+    )})
+
+
 def variant_example() -> None:
     mapping = MappingSpec(overrides={"pets": {
         "variant_layout": "split",
@@ -117,6 +138,39 @@ def scalar_example() -> None:
     print(serialize(inverse, prepare(derive(Measurements), lexical)))
 
 
+def combined_example() -> None:
+    prepared = prepare(derive(Report))
+    native = parse(
+        f'<report xmlns="{NS}" xmlns:q="urn:outside">'
+        '<measurements><amount>9007199254740993.125</amount>'
+        '<when>2024-02-03T04:05:06+10:00</when>'
+        '<local>2024-02-03T04:05:06</local></measurements>'
+        '<commentary>lead<q:item q:flag="yes">inside<q:child/>inner-tail</q:item>outer-tail</commentary>'
+        '<cat name="first"/><dog name="second"/></report>', prepared,
+    )
+    rows = decompose(native, prepared)
+    rebuilt = reconstruct(
+        {name: list(reversed(values)) for name, values in rows.items()},
+        prepare(derive(Report)),
+    )
+    assert rebuilt.measurements.amount == Decimal("9007199254740993.125")
+    assert rebuilt.measurements.when.offset == 600
+    assert rebuilt.measurements.local.offset is None
+    assert rebuilt.pets == [Cat("first"), Dog("second")]
+    xml = serialize(rebuilt, prepare(derive(Report)))
+    commentary = ElementTree.fromstring(xml).find(f"{{{NS}}}commentary")
+    assert commentary is not None
+    assert commentary.text == "lead"
+    assert commentary[0].tag == "{urn:outside}item"
+    assert commentary[0].attrib == {"{urn:outside}flag": "yes"}
+    assert commentary[0].text == "inside"
+    assert commentary[0][0].tail == "inner-tail"
+    assert commentary[0].tail == "outer-tail"
+    assert parse(xml, prepare(derive(Report))) == rebuilt
+    print("One document: choices, exact scalars, offsets and standalone mixed fragments:")
+    print(xml)
+
+
 def main() -> None:
     mapping = MappingSpec(overrides={"values": {"table": "entries", "column": "text"}})
     prepared = prepare(derive(Document), mapping)
@@ -149,6 +203,7 @@ def main() -> None:
     print(xml)
     variant_example()
     scalar_example()
+    combined_example()
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ from xsdata.models.datatype import (
 
 from mountainash_structuremap.bindings.contracts import CapabilityReport, DocumentBinding, NativeBinding, RecordAdapter
 from mountainash_structuremap.bindings.dataclass import record_fields, validate_constructor
+from mountainash_structuremap.bindings.xml_fragments import FragmentCodec
 from mountainash_structuremap.bindings.xml_scalars import _integer_text, prepare_xml_scalar
 from mountainash_structuremap.codecs import ScalarCodec
 from mountainash_structuremap.definitions import (
@@ -171,7 +172,20 @@ class XsdataBinding(NativeBinding, DocumentBinding):
     def prepare_scalar(
         self, declaration: Scalar, *, native_type: type | None, format: str | None,
         column: str, policy: str | None, path: str, metadata_namespace: str = "_sm_",
+        field_context: tuple[type, str, str | None] | None = None,
     ) -> ScalarCodec:
+        if declaration.type == "fragment":
+            if field_context is None:
+                raise StructureMapError(
+                    "unsupported_native_shape", "Fragment codec requires its prepared native field metadata",
+                    path=path, owner="binding gap",
+                    remedy="Declare fragment content as a native xsdata field",
+                )
+            field_owner, field_name, namespace = field_context
+            return FragmentCodec(
+                column, path, field_owner=field_owner, field_name=field_name,
+                namespace=namespace, attributes=declaration.format == "attributes",
+            )
         return prepare_xml_scalar(
             declaration, native_type, column, path,
             policy=policy, metadata_namespace=metadata_namespace,
@@ -410,18 +424,29 @@ def _describe_variable(
     variable: XmlVar, metadata: Mapping[str, Any], annotation: object, path: str,
     register: Callable[[type, str], str],
 ) -> Shape:
-    if variable.is_wildcard or variable.is_attributes or variable.mixed:
-        raise StructureMapError(
-            "unsupported_native_shape", "Open XML content requires the fragment binding capability",
-            path=path, owner="binding gap", remedy="Use a supported declared XML field until fragment binding is available",
+    if variable.is_wildcard or variable.mixed or variable.wildcards:
+        if variable.mixed and not variable.list_element:
+            raise StructureMapError(
+                "unsupported_native_shape",
+                "Mixed content requires a native collection field",
+                path=path, owner="native limitation",
+                remedy="Declare the mixed field as list[object] or tuple[object, ...]; xsdata 26.2 cannot round-trip its scalar mixed-content carrier",
+            )
+        fragment: Shape = Scalar(type="fragment")
+        fragment_shape = (
+            Sequence(item=fragment, container="tuple" if variable.factory is tuple else "list")
+            if variable.list_element else fragment
         )
+        return _annotation_nullability(fragment_shape, annotation)
+    if variable.is_attributes:
+        return Scalar(type="fragment", format="attributes")
     if variable.is_elements:
         declared_choices = metadata.get("choices", ())
-        if variable.wildcards or len(declared_choices) != len(variable.elements):
+        if len(declared_choices) != len(variable.elements):
             raise StructureMapError(
                 "ambiguous_native_alternative", "Compound metadata does not expose unique declared element choices",
                 path=path, owner="native limitation",
-                remedy="Use distinct supported element QNames and native types; wildcard choices require fragment binding",
+                remedy="Use distinct supported element QNames and native types",
             )
         choices: list[Alternative] = []
         for child, declaration in zip(variable.elements.values(), declared_choices, strict=True):

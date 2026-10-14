@@ -248,7 +248,6 @@ def prepare(
         "shared_types",
         "json_numbers",
         "duplicate_members",
-        "open_content",
     )
     for policy in global_unavailable:
         if getattr(mapping.defaults, policy) is not None:
@@ -266,6 +265,19 @@ def prepare(
             owner="binding gap",
             path="variant_layout",
             remedy="Use variant_layout='split' or 'prefixed'",
+        )
+    if mapping.defaults.open_content == "fragment" and model.binding != "xsdata":
+        raise StructureMapError(
+            "unavailable_capability", "Fragment open content is available only through xsdata",
+            owner="binding gap", path="open_content",
+            remedy="Use an xsdata binding or omit the fragment strategy",
+        )
+    if mapping.defaults.open_content in ("drop", "structured"):
+        raise StructureMapError(
+            "unavailable_capability",
+            f"XML open_content={mapping.defaults.open_content!r} is not supported by xsdata",
+            owner="binding gap", path="open_content",
+            remedy="Use open_content='fragment' or omit the strategy",
         )
     if mapping.defaults.value_space is not None and model.binding != "xsdata":
         raise StructureMapError(
@@ -444,6 +456,16 @@ def prepare(
         for policy in global_unavailable:
             if getattr(override, policy) is not None:
                 unavailable(path, policy)
+        if override.open_content is not None:
+            if model.binding != "xsdata" or override.open_content not in ("fragment", "reject"):
+                unavailable(path, "open_content")
+            for _, candidate_shape in targets:
+                open_shape = collection_payload(candidate_shape)
+                if not isinstance(open_shape, Scalar) or open_shape.type != "fragment":
+                    raise StructureMapError(
+                        "inapplicable_override", "Open-content policies apply only to native wildcard or mixed fields",
+                        path=path, remedy="Set open_content on a native open-content field",
+                    )
         collection_policies = ("key", "positions", "ordered", "collection_table")
         for policy in collection_policies:
             if getattr(override, policy) is not None and kind != "collection":
@@ -464,7 +486,6 @@ def prepare(
             "presence",
             "json_numbers",
             "duplicate_members",
-            "open_content",
         )
         for policy in unsupported:
             value = getattr(override, policy)
@@ -601,6 +622,7 @@ def prepare(
                     format=member.xml.format if member.xml else None,
                     namespace=record_namespace,
                     role_suffix=role_suffix,
+                    field_context=(model.native_types[definition], member.name, record_namespace),
                 ),
             )
             for member in members
@@ -629,6 +651,7 @@ def prepare(
         position_group: str | None = None,
         namespace: str | None = None,
         format: str | None = None,
+        field_context: tuple[type, str, str | None] | None = None,
     ) -> str:
         override = mapping.overrides.get(authored_path)
         # Context contains only suffixes of finite authored selectors and their
@@ -736,6 +759,7 @@ def prepare(
                     branch_prefix=prefix_override,
                     override_applied=discriminator_column is not None,
                     destination=payload_id,
+                    field_context=field_context,
                 )
 
         pending.append(compile_payload)
@@ -759,6 +783,7 @@ def prepare(
         ignore_table_override: bool = False,
         override_applied: bool = False,
         destination: int | None = None,
+        field_context: tuple[type, str, str | None] | None = None,
     ) -> int:
         nullable = isinstance(shape, Nullable)
         value_shape = shape.value if isinstance(shape, Nullable) else shape
@@ -773,6 +798,18 @@ def prepare(
                 if scalar_override is not None and scalar_override.value_space is not None
                 else mapping.defaults.value_space
             )
+            if value_shape.type == "fragment":
+                open_policy = (
+                    scalar_override.open_content
+                    if scalar_override is not None and scalar_override.open_content is not None
+                    else mapping.defaults.open_content
+                )
+                if open_policy == "reject":
+                    raise StructureMapError(
+                        "unsupported_open_content", "Native open content is rejected by policy",
+                        owner="mapping restriction", path=authored_path,
+                        remedy="Use open_content='fragment' at this path or remove the open-content field",
+                    )
             codec = native_binding.prepare_scalar(
                 value_shape,
                 native_type=native_type,
@@ -781,6 +818,7 @@ def prepare(
                 policy=policy,
                 metadata_namespace=naming.metadata_namespace,
                 path=authored_path,
+                field_context=field_context,
             )
             return emit(ScalarProgram(authored_path, codec, nullable), destination)
         if isinstance(value_shape, RecordRef):
@@ -839,6 +877,7 @@ def prepare(
                 override_applied=override_applied,
                 inherited_prefix=branch_prefix,
                 destination=destination,
+                field_context=field_context,
             )
         if isinstance(value_shape, (Sequence, Map)):
             if isinstance(value_shape, Map):
@@ -881,6 +920,7 @@ def prepare(
                         map_values=isinstance(value_shape, Map),
                         role_suffix=role_suffix,
                         override_applied=override_applied,
+                        field_context=field_context,
                         destination=destination,
                     )
             table = row_table(
@@ -899,6 +939,7 @@ def prepare(
                 prefix_override=override.prefix if override is not None else None,
                 namespace=namespace,
                 format=format,
+                field_context=field_context,
             )
             edge: ValueProgram = (
                 MapProgram(authored_path, table, nullable)
@@ -920,6 +961,7 @@ def prepare(
                     relative_path=join(relative_path, str(index)),
                     namespace=namespace,
                     role_suffix=role_suffix,
+                    field_context=field_context,
                 )
                 for index, item in enumerate(value_shape.items)
             )
@@ -952,6 +994,7 @@ def prepare(
         override_applied: bool = False,
         inherited_prefix: str | None = None,
         destination: int | None,
+        field_context: tuple[type, str, str | None] | None = None,
     ) -> int:
         override = None if override_applied else mapping.overrides.get(authored_path)
         layout = (
@@ -1119,6 +1162,7 @@ def prepare(
                     position_group=f"{family}:{source_definition}:{relative_path}:{authored_path}:{role_suffix}",
                     namespace=namespace,
                     format=branch_format,
+                    field_context=field_context,
                 )
                 branch_program = cast(int, tables[table]["program"])
                 branches.append(VariantBranch(key, tags[key], branch_program, table, branch_nullable))
@@ -1143,6 +1187,7 @@ def prepare(
                     role_suffix=f"{role_suffix}|variant:{key}",
                     ignore_table_override=True,
                     override_applied=True,
+                    field_context=field_context,
                 )
                 branches.append(VariantBranch(key, tags[key], branch_program, nullable_payload=branch_nullable))
         null_table: str | None = None

@@ -27,7 +27,7 @@ from tests.fixtures.xml_variants import (
 )
 
 
-@pytest.mark.parametrize("layout", ["split", "prefixed"])
+@pytest.mark.parametrize("layout", ["split", "prefixed", "shared"])
 def test_native_xsi_type_subclass_is_recorded_not_inferred_from_payload(layout):
     prepared = prepare(derive(TypedAnimal), MappingSpec(defaults={"variant_layout": layout}))
     native = parse(
@@ -43,7 +43,7 @@ def test_native_xsi_type_subclass_is_recorded_not_inferred_from_payload(layout):
     assert parse(serialize(rebuilt, prepared), prepared).animal == Hound("hound", 7)
 
 
-@pytest.mark.parametrize("layout", ["split", "prefixed"])
+@pytest.mark.parametrize("layout", ["split", "prefixed", "shared"])
 def test_selected_nil_qnames_are_distinct_from_all_null_records(layout):
     prepared = prepare(derive(SelectedNil), MappingSpec(defaults={"variant_layout": layout}))
     source = SelectedNil([
@@ -55,7 +55,7 @@ def test_selected_nil_qnames_are_distinct_from_all_null_records(layout):
     assert rebuilt.values == [DerivedElement("{urn:a}a", None), EmptyA(), DerivedElement("{urn:b}b", None), EmptyB()]
 
 
-@pytest.mark.parametrize("layout", ["split", "prefixed"])
+@pytest.mark.parametrize("layout", ["split", "prefixed", "shared"])
 def test_equal_local_names_have_distinct_declared_namespace_alternatives(layout):
     mapping = MappingSpec(overrides={"values": {
         "variant_layout": layout,
@@ -80,7 +80,7 @@ def test_inherited_choice_qname_is_frozen_at_preparation():
     assert caught.value.path == "values"
 
 
-@pytest.mark.parametrize("layout", ["split", "prefixed"])
+@pytest.mark.parametrize("layout", ["split", "prefixed", "shared"])
 def test_compound_choice_retains_its_xsi_type_subclass(layout):
     from tests.fixtures.xml_variants import AnimalChoices
 
@@ -101,7 +101,8 @@ def test_compound_choice_retains_its_xsi_type_subclass(layout):
     rows = decompose(source, prepared)
     table = "values__animal" if layout == "split" else "values"
     assert rows[table][0]["smell"] == "7"
-    assert rows[table][0]["kept_hound_type_name"] == "hound"
+    name_column = "kept_name" if layout == "shared" else "kept_hound_type_name"
+    assert rows[table][0][name_column] == "hound"
     rebuilt = reconstruct(rows, prepare(derive(AnimalChoices), mapping))
     assert type(rebuilt.values[0]) is Hound
     assert rebuilt.values[0].scent == 7
@@ -153,7 +154,7 @@ def test_native_sibling_xsi_type_substitution_is_frozen_during_preparation():
     assert parse(serialize(rebuilt, prepared), prepared) == source
 
 
-@pytest.mark.parametrize("layout", ["split", "prefixed"])
+@pytest.mark.parametrize("layout", ["split", "prefixed", "shared"])
 def test_nillable_token_choice_distinguishes_nil_from_empty_tokens(layout):
     source = TokenChoices([
         DerivedElement(qname="ints", value=None),

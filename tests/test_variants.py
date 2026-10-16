@@ -4,7 +4,7 @@ import pytest
 
 from mountainash_structuremap import StructureMapError, decompose, derive, parse, prepare, reconstruct, serialize
 from mountainash_structuremap.codecs import Cell
-from mountainash_structuremap.mapping import AlternativeLayout, MappingSpec, SourceDiscriminator, UseOverride
+from mountainash_structuremap.mapping import AlternativeLayout, MappingSpec, UseOverride
 from tests.fixtures.variants import (
     CAT,
     DOG,
@@ -264,16 +264,6 @@ def test_real_alternative_named_null_cannot_collide_with_metadata_null_role():
     assert caught.value.code == "table_collision"
 
 
-def test_source_discriminator_is_rejected_with_recorded_strategy_remedy():
-    mapping = MappingSpec(overrides={"pets": UseOverride(
-        discriminator=SourceDiscriminator(field="kind"),
-    )})
-    with pytest.raises(StructureMapError) as caught:
-        prepare(derive(NullAlternativePets), mapping)
-    assert caught.value.code == "unavailable_capability"
-    assert "strategy='recorded'" in caught.value.remedy
-
-
 def test_unknown_native_runtime_types_cannot_extend_variant_schema():
     prepared = prepare(derive(NullAlternativePets), MappingSpec(overrides={
         "pets": UseOverride(variant_layout="split", alternatives={
@@ -328,8 +318,8 @@ def test_detached_cyclic_component_in_inactive_variant_is_rejected():
             "branch_label": key,
             variant_column: "Branch",
         })
-        if prepared.parent_table_column in cycle_plan.columns:
-            row[prepared.parent_table_column] = cycle_table
+        if cycle_plan.layout.parent_table is not None:
+            row[cycle_plan.layout.parent_table] = cycle_table
         return row
 
     tables[cycle_table] = [
@@ -419,7 +409,7 @@ def test_inline_null_does_not_emit_split_variant_metadata():
     supplied[prepared.root_table] = [
         {column: None for column in prepared.tables[prepared.root_table].columns}
     ]
-    supplied[prepared.root_table][0][prepared.key_column] = "root"
+    supplied[prepared.root_table][0][prepared.tables[prepared.root_table].layout.key[0]] = "root"
     assert reconstruct(supplied, prepared) == NullableDetailRoot(None)
 
 
@@ -441,9 +431,9 @@ def test_inactive_shared_variant_descendants_are_rejected():
     inactive = next(name for name in tables if not rows[name])
     plan = prepared.tables[inactive]
     injected = {column: None for column in plan.columns}
-    injected[prepared.key_column] = "inactive"
-    injected[prepared.parent_column] = rows[prepared.root_table][0][prepared.key_column]
-    injected[prepared.position_column] = 0
+    injected[plan.layout.key[0]] = "inactive"
+    injected[plan.layout.parent[0]] = rows[prepared.root_table][0][prepared.tables[prepared.root_table].layout.key[0]]
+    injected[plan.layout.position] = 0
     business = next(column for column in plan.columns if not column.startswith("_sm_"))
     injected[business] = "invalid"
     rows[inactive].append(injected)

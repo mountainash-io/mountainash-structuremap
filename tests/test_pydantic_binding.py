@@ -124,7 +124,7 @@ def test_captured_values_survive_without_factory_or_serialization_projection():
     assert calls == []
     original = Data(value=17)
     rows = decompose(original, prepared)
-    assert {key: value for key, value in rows["root"][0].items() if key != prepared.key_column} == {
+    assert {key: value for key, value in rows["root"][0].items() if key not in prepared.tables["root"].layout.key} == {
         "value": 17, "token": "captured",
     }
     restored = reconstruct(rows, prepare(derive(Data)))

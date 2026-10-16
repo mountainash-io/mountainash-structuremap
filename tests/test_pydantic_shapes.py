@@ -63,15 +63,17 @@ def test_native_literal_allowed_values_are_checked_on_independent_input():
     assert result.child.kind == "allowed"
     with pytest.raises(StructureMapError) as caught:
         reconstruct({"root": [{"_sm_key": "row", "child_kind": "other"}]}, prepared)
-    assert isinstance(caught.value.__cause__, ValidationError)
-    assert caught.value.__cause__.errors()[0]["type"] == "literal_error"
-    assert caught.value.path == "child"
+    assert caught.value.code == "literal_domain_violation"
+    assert caught.value.path == "child/kind"
 
 
-def test_plain_dataclass_literal_is_not_advertised_as_native_validated():
+def test_plain_dataclass_literal_domain_is_checked_inside_pydantic():
+    prepared = prepare(derive(MixedLiteral))
+    result = reconstruct({"root": [{"_sm_key": "row", "child_kind": "allowed"}]}, prepared)
+    assert result.child == PlainLiteral("allowed")
     with pytest.raises(StructureMapError) as caught:
-        derive(MixedLiteral)
-    assert caught.value.code == "unsupported_annotation"
+        reconstruct({"root": [{"_sm_key": "row", "child_kind": "other"}]}, prepared)
+    assert caught.value.code == "literal_domain_violation"
     assert caught.value.path == "child/kind"
 
 
@@ -90,7 +92,6 @@ def test_literal_and_annotated_metadata_survive_container_discovery():
 
 @pytest.mark.parametrize("model,path,code", [
     (RootModel[int], "", "unsupported_native_shape"),
-    (DateValue, "value", "unsupported_annotation"),
     (MixedDomain, "value", "unsupported_annotation"),
     (MissingForward, "child", "annotation_resolution_failed"),
     (XmlEnvelope, "child", "unavailable_binding"),
@@ -101,6 +102,14 @@ def test_unsupported_shapes_report_the_actual_member_and_limitation(model, path,
     assert caught.value.code == code
     assert caught.value.path == path
     assert caught.value.remedy
+
+
+def test_native_date_uses_exact_date_cells():
+    prepared = prepare(derive(DateValue))
+    value = date(2023, 9, 30)
+    rows = {"root": [{"_sm_key": "r0", "value": value}]}
+    assert reconstruct(rows, prepared).value == value
+    assert decompose(DateValue(value=value), prepared) == rows
 
 
 @pytest.mark.parametrize("value", [-(2**63), 2**63 - 1])

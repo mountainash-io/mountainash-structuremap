@@ -36,6 +36,7 @@ jobs:
           python -m pip install "hatch>=1.14"
           hatch run test:test
           hatch run test:python examples/pydantic_roundtrip.py
+          hatch run test:python examples/composable_mapping.py
 
   foundation-wheel:
     name: foundation-wheel

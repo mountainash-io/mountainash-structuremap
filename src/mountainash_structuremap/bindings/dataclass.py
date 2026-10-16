@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import MISSING, Field, fields, is_dataclass
+from datetime import date
+from decimal import Decimal
 from inspect import signature
 from types import ModuleType, UnionType
 from typing import Annotated, Any, ForwardRef, Literal, Tuple, Union, get_args, get_origin, get_type_hints
@@ -10,7 +12,7 @@ from typing import Annotated, Any, ForwardRef, Literal, Tuple, Union, get_args, 
 from pydantic import BaseModel
 
 from mountainash_structuremap.bindings.contracts import CapabilityReport, VariantAdapter
-from mountainash_structuremap.codecs import PrimitiveCodec
+from mountainash_structuremap.codecs import PrimitiveCodec, ScalarCodec
 from mountainash_structuremap.definitions import (
     Alternative,
     Alternatives,
@@ -25,6 +27,7 @@ from mountainash_structuremap.definitions import (
     Shape,
 )
 from mountainash_structuremap.errors import StructureMapError
+from mountainash_structuremap.native_scalars import prepare_native_scalar
 
 _SCALARS: dict[type, Literal["str", "int", "float", "bool"]] = {
     str: "str",
@@ -37,6 +40,19 @@ _SCALARS: dict[type, Literal["str", "int", "float", "bool"]] = {
 class DataclassBinding:
     name = "dataclass"
     capabilities = CapabilityReport()
+
+    def describe_root(self, annotation: object, register: Callable[[type, str], str], *, path: str) -> Shape:
+        if isinstance(annotation, type) and is_dataclass(annotation):
+            return RecordRef(definition=register(annotation, path))
+        if get_origin(annotation) in (list, tuple):
+            shape = describe_annotation(annotation, path, register)
+            if isinstance(shape, Sequence):
+                return shape
+        raise StructureMapError(
+            "unsupported_root", "Dataclass roots require a record or typed sequence",
+            path=path, owner="binding gap",
+            remedy="Use a dataclass record or list[T]/tuple[T, ...] with binding='dataclass'",
+        )
 
     def describe_record(
         self, cls: type, register: Callable[[type, str], str], *, path: str,
@@ -94,11 +110,13 @@ class DataclassBinding:
         metadata_namespace: str = "_sm_",
         path: str,
         field_context: tuple[type, str, str | None] | None = None,
-    ) -> PrimitiveCodec:
+    ) -> ScalarCodec:
+        if declaration.type in ("decimal", "date"):
+            return prepare_native_scalar(declaration, column, policy, path)
         if declaration.type not in ("str", "int", "float", "bool"):
             raise StructureMapError("unavailable_scalar", f"Scalar {declaration.type!r} is unavailable",
-                                    path=path, owner="binding gap", remedy="Use a supported primitive scalar")
-        return PrimitiveCodec(declaration.type, column, path)
+                                    path=path, owner="binding gap", remedy="Use a primitive, Decimal or date scalar")
+        return PrimitiveCodec(declaration.type, column, path, allowed_values=declaration.allowed_values)
 
     def prepare_variant(
         self,
@@ -246,7 +264,7 @@ def describe_annotation(
     register: Callable[[type, str], str],
     *,
     record_predicate: Callable[[type], bool] = is_dataclass,
-    allow_literals: bool = False,
+    allow_literals: bool = True,
 ) -> Shape:
     annotation = _unwrap_annotated(annotation)
     if isinstance(annotation, (str, ForwardRef)):
@@ -259,9 +277,11 @@ def describe_annotation(
     if origin is Literal and allow_literals and args:
         literal_type = type(args[0])
         if literal_type in _SCALARS and all(type(value) is literal_type for value in args):
-            return Scalar(type=_SCALARS[literal_type])
+            return Scalar(type=_SCALARS[literal_type], allowed_values=args)
     if isinstance(annotation, type) and annotation in _SCALARS:
         return Scalar(type=_SCALARS[annotation])
+    if isinstance(annotation, type) and annotation in (Decimal, date):
+        return Scalar(type="decimal" if annotation is Decimal else "date", native_type=register(annotation, path))
     if isinstance(annotation, type) and record_predicate(annotation):
         return RecordRef(definition=register(annotation, path))
     if origin in (Union, UnionType):
@@ -289,6 +309,10 @@ def describe_annotation(
                 args[1], path, register, record_predicate=record_predicate, allow_literals=allow_literals,
             ),
         )
+    if origin is tuple and len(args) == 2 and args[-1] is Ellipsis:
+        return Sequence(item=describe_annotation(
+            args[0], path, register, record_predicate=record_predicate, allow_literals=allow_literals,
+        ), container="tuple")
     if origin is tuple and annotation is not Tuple and (not args or args[-1] is not Ellipsis):
         return Positional(items=tuple(describe_annotation(
             arg, path, register, record_predicate=record_predicate, allow_literals=allow_literals,
@@ -299,5 +323,5 @@ def describe_annotation(
         path=path,
         owner="binding gap",
         remedy="Use a supported scalar, container or native record annotation; "
-        "BaseModel Literal fields must share one supported primitive type",
+        "Literal fields must share one supported primitive type",
     )

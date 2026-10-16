@@ -11,10 +11,16 @@ from xml.etree.ElementTree import fromstring
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mountainash.typespec import TypeSpec  # noqa: E402
+from mountainash.typespec.spec import FieldSpec, TypeSpec  # noqa: E402
+from mountainash.typespec.universal_types import UniversalType as U  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
+from wheel_external import DateParts  # noqa: E402
 from wheel_models import (  # noqa: E402
     CATALOG_XML,
+    AuthoringAddress,
+    AuthoringDirectory,
+    AuthoringItem,
+    AuthoringLedger,
     Catalog,
     Entry,
     Note,
@@ -28,13 +34,146 @@ from mountainash_structuremap import (  # noqa: E402
     StructureMapError,
     decompose,
     derive,
+    dump_mapping,
+    load_mapping,
     parse,
     prepare,
     reconstruct,
     serialize,
 )
 from mountainash_structuremap.definitions import DerivedModel, StructureSpec  # noqa: E402
-from mountainash_structuremap.mapping import AlternativeLayout, UseOverride  # noqa: E402
+from mountainash_structuremap.mapping import AlternativeLayout, MappingUse, UseOverride  # noqa: E402
+
+
+def _portable_mapping() -> MappingSpec:
+    return load_mapping(Path("authoring-mapping.json").read_bytes(), format="json")
+
+
+def _authoring_types():
+    return {
+        name: TypeSpec.from_frictionless(schema)
+        for name, schema in json.loads(Path("authoring-schema.json").read_text(encoding="utf-8")).items()
+    }
+
+
+def _authoring_rows():
+    return {
+        "root": [{"_sm_key": "ledger-1"}],
+        "items": [
+            {"_sm_key": "second", "_sm_parent": "ledger-1", "_sm_position": 8,
+             "country": "NZ", "amount": "1000000", "year": 2024, "month": 2, "day": 29},
+            {"_sm_key": "first-a", "_sm_parent": "ledger-1", "_sm_position": 2,
+             "country": "AU", "amount": "0.01", "year": None, "month": None, "day": None},
+            {"_sm_key": "first-b", "_sm_parent": "ledger-1", "_sm_position": 5,
+             "country": "AU", "amount": "0.01", "year": None, "month": None, "day": None},
+        ],
+    }
+
+
+def _authoring_prepare(mapping, relations):
+    return prepare(derive(AuthoringLedger), mapping, relations=relations, components=(DateParts(),))
+
+
+def _assert_authoring_value(value) -> None:
+    assert type(value) is AuthoringLedger
+    assert type(value.items) is tuple
+    assert value.items == (
+        AuthoringItem("AU", Decimal("0.01"), None),
+        AuthoringItem("AU", Decimal("0.01"), None),
+        AuthoringItem("NZ", Decimal("1000000"), date(2024, 2, 29)),
+    )
+    assert all(type(item.amount) is Decimal for item in value.items)
+    assert type(value.items[-1].effective) is date
+
+
+def _authoring_persist() -> None:
+    mapping = MappingSpec(use=MappingUse(component="core.record", children={
+        "items": MappingUse(component="core.sequence", children={
+            "item": MappingUse(component="core.record", children={
+                "country": MappingUse(component="core.value"),
+                "amount": MappingUse(component="core.value"),
+                "effective": MappingUse(component="example.date-parts.v1",
+                                        config={"columns": ["year", "month", "day"]}),
+            }),
+        }),
+    }))
+    relations = {
+        name: TypeSpec(fields=[
+            FieldSpec(name=column, type=kind, missing_values=[]) for column, kind in fields
+        ], missing_values=[])
+        for name, fields in {
+            "root": [("_sm_key", U.STRING)],
+            "items": [
+                ("_sm_key", U.STRING), ("_sm_parent", U.STRING), ("_sm_position", U.INTEGER),
+                ("country", U.STRING), ("amount", U.STRING),
+                ("year", U.INTEGER), ("month", U.INTEGER), ("day", U.INTEGER),
+            ],
+        }.items()
+    }
+    prepared = _authoring_prepare(mapping, relations)
+    Path("authoring-mapping.json").write_text(dump_mapping(mapping, format="json"), encoding="utf-8")
+    Path("authoring-schema.json").write_text(json.dumps({
+        name: schema.to_frictionless() for name, schema in relations.items()
+    }), encoding="utf-8")
+    source = AuthoringLedger((
+        AuthoringItem("AU", Decimal("0.01"), None),
+        AuthoringItem("AU", Decimal("0.01"), None),
+        AuthoringItem("NZ", Decimal("1000000"), date(2024, 2, 29)),
+    ))
+    Path("authoring-emitted.json").write_text(json.dumps(decompose(source, prepared)), encoding="utf-8")
+
+
+def _authoring_independent() -> None:
+    relations = _authoring_types()
+    prepared = _authoring_prepare(_portable_mapping(), relations)
+    _assert_authoring_value(reconstruct(_authoring_rows(), prepared))
+    _assert_authoring_value(reconstruct(json.loads(Path("authoring-emitted.json").read_text()), prepared))
+    empty = {"root": [{"_sm_key": "empty"}], "items": []}
+    assert reconstruct(empty, prepared) == AuthoringLedger(())
+    assert prepared.tables["items"].typespec == relations["items"]
+    print("Portable mapping and independent schemas reconstruct exact tuples, duplicates, Decimal/date and empty data")
+
+def _role_mapping() -> MappingSpec:
+    return MappingSpec.model_validate({"overrides": {
+        "home": {"key": {"strategy": "source", "columns": ["city"]},
+                 "collection_table": {"strategy": "shared", "table": "addresses",
+                                      "role_column": "address_role", "role": "home"}},
+        "work": {"key": {"strategy": "source", "columns": ["city"]},
+                 "collection_table": {"strategy": "shared", "table": "addresses",
+                                      "role_column": "address_role", "role": "work"}},
+    }})
+
+
+def _role_rows():
+    return {"root": [{"_sm_key": "directory"}], "addresses": [
+        {"city": "Oslo", "_sm_parent": "directory", "_sm_position": 9,
+         "address_role": "home", "country": "NO"},
+        {"city": "Kyoto", "_sm_parent": "directory", "_sm_position": 3,
+         "address_role": "home", "country": "JP"},
+        {"city": "Oslo", "_sm_parent": "directory", "_sm_position": 0,
+         "address_role": "work", "country": "NO"},
+    ]}
+
+
+def _persist_roles() -> None:
+    mapping = _role_mapping()
+    prepared = prepare(derive(AuthoringDirectory), mapping)
+    Path("authoring-role-mapping.json").write_text(dump_mapping(mapping, format="json"), encoding="utf-8")
+    Path("authoring-role-schema.json").write_text(json.dumps({
+        name: table.typespec.to_frictionless() for name, table in prepared.tables.items()
+    }), encoding="utf-8")
+
+
+def _read_roles() -> None:
+    mapping = load_mapping(Path("authoring-role-mapping.json").read_bytes(), format="json")
+    relations = {name: TypeSpec.from_frictionless(schema) for name, schema in
+                 json.loads(Path("authoring-role-schema.json").read_text(encoding="utf-8")).items()}
+    prepared = prepare(derive(AuthoringDirectory), mapping, relations=relations)
+    assert reconstruct(_role_rows(), prepared) == AuthoringDirectory(
+        [AuthoringAddress("Kyoto", "JP"), AuthoringAddress("Oslo", "NO")],
+        [AuthoringAddress("Oslo", "NO")],
+    )
+    print("Portable shared roles keep equal source keys and independent position domains")
 
 
 @dataclass
@@ -211,21 +350,30 @@ def _assert_document(value) -> None:
 
 
 def _assert_gapped_root_positions(tables, prepared) -> None:
-    root_key = tables[prepared.root_table][0][prepared.key_column]
-    root_children = [
-        row
+    root_layout = prepared.tables[prepared.root_table].layout
+    root_key = tuple(tables[prepared.root_table][0][column] for column in root_layout.key)
+    positions = [
+        row[prepared.tables[table_name].layout.position]
         for table_name, rows in tables.items()
         if table_name != prepared.root_table
         for row in rows
-        if row.get(prepared.parent_column) == root_key
+        if tuple(row[column] for column in prepared.tables[table_name].layout.parent) == root_key
     ]
-    assert sorted(row[prepared.position_column] for row in root_children) == [0, 7, 14]
+    assert sorted(positions) == [0, 7, 14]
 
 
 def main(mode: str) -> None:
     if mode in {"independent", "write", "read", "invalid"}:
         load_xml_types()
     installed_path()
+    if mode == "authoring-persist":
+        _authoring_persist()
+        _persist_roles()
+        return
+    if mode == "authoring-independent":
+        _authoring_independent()
+        _read_roles()
+        return
     if mode == "pydantic":
         import pydantic
 
@@ -324,7 +472,7 @@ def main(mode: str) -> None:
         mapping = _mapping()
         prepared = prepare(derive(Catalog), mapping)
         tables = _independent_catalog_tables(prepared)
-        tables["notes"][0][prepared.position_column] = tables["entries"][0][prepared.position_column]
+        tables["notes"][0][prepared.tables["notes"].layout.position] = tables["entries"][0][prepared.tables["entries"].layout.position]
         try:
             reconstruct(tables, prepared)
         except StructureMapError as error:

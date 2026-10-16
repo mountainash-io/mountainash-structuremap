@@ -88,17 +88,18 @@ def main() -> None:
         fixture = temp / "fixture"
         fixture.mkdir()
         support = ROOT / "tests" / "support" / "wheel_smoke"
+        shutil.copy2(support / "external.py", fixture / "wheel_external.py")
         shutil.copy2(support / "models.py", fixture / "wheel_models.py")
         shutil.copy2(support / "runner.py", fixture / "runner.py")
 
         xml_python = install(built[0], temp, extra=True)
-        execute_smoke(xml_python, fixture, temp, ("independent", "write", "read", "invalid", "pydantic"))
+        execute_smoke(xml_python, fixture, temp, ("independent", "write", "read", "invalid", "pydantic", "authoring-persist", "authoring-independent"))
         base_python = install(built[0], temp, extra=False)
-        execute_smoke(base_python, fixture, temp, ("base", "missing-xml", "pydantic"))
+        execute_smoke(base_python, fixture, temp, ("base", "missing-xml", "pydantic", "authoring-independent"))
         pydantic_python = install(
             built[0], temp, extra=False, pydantic_constraint="==2.11.0"
         )
-        execute_smoke(pydantic_python, fixture, temp, ("base", "pydantic"))
+        execute_smoke(pydantic_python, fixture, temp, ("base", "pydantic", "authoring-independent"))
         print("Installed-wheel smoke passed using the wheel's declared pinned GitHub dependency")
 
 

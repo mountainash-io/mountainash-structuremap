@@ -2,6 +2,9 @@
 
 import json
 from dataclasses import dataclass, field
+from datetime import date
+from decimal import Decimal
+from typing import Literal
 
 from mountainash_structuremap import MappingSpec, Naming, UseOverride, decompose, derive, prepare, reconstruct
 
@@ -27,6 +30,14 @@ class Document:
 class Node:
     label: str
     children: list["Node"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Line:
+    country: Literal["AU", "NZ"]
+    amount: Decimal
+    effective: date | None
+    source_date: str
 
 
 def main() -> None:
@@ -72,6 +83,25 @@ def main() -> None:
     assert configured_rows["persons"][0]["display_name"] == "Ada"
     assert configured_rows["persons"][0]["residence_city"] == "Oslo"
     assert reconstruct(configured_rows, prepare(derive(Document), mapping)) == source
+
+    lines = (
+        Line("AU", Decimal("0.01"), date(2023, 9, 30), "2023-09"),
+        Line("NZ", Decimal("1000000"), None, "2023"),
+        Line("AU", Decimal("0.01"), date(2023, 9, 30), "2023-09"),
+    )
+    line_plan = prepare(derive(tuple[Line, ...], binding="dataclass"))
+    line_rows = decompose(lines, line_plan)
+    print("Typed sequence-root rows:", line_rows)
+    restored = reconstruct(
+        {name: list(reversed(rows)) for name, rows in line_rows.items()},
+        prepare(derive(tuple[Line, ...], binding="dataclass")),
+    )
+    assert restored == lines
+    assert type(restored) is tuple
+    assert type(restored[0].amount) is Decimal
+    assert type(restored[0].effective) is date
+    assert reconstruct(decompose((), line_plan), line_plan) == ()
+    print("Reconstructed typed sequence:", restored)
 
 
 if __name__ == "__main__":

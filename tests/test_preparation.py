@@ -84,14 +84,11 @@ def test_invalid_mapping_paths_and_targets_fail_before_execution(overrides, code
     "defaults",
     [
         {"presence": "preserve"},
-        {"positions": "lenient"},
         {"construction": "unvalidated"},
         {"variant_layout": "eav"},
         {"role_discriminator": "combined"},
         {"shared_types": "widen"},
         {"value_space": "lexical"},
-        {"json_numbers": "exact"},
-        {"duplicate_members": "preserve"},
         {"open_content": "structured"},
     ],
 )
@@ -105,11 +102,6 @@ def test_declared_unavailable_global_policies_fail_during_preparation(defaults):
 @pytest.mark.parametrize(
     "path,policy",
     [
-        ("people", {"key": {"strategy": "source", "columns": ["name"]}}),
-        ("people", {"ordered": False}),
-        ("people", {"collection_table": {"strategy": "shared", "table": "shared", "role_column": "role"}}),
-        ("people/name", {"cast": {"strategy": "type", "to": "date"}}),
-        ("people/age", {"cast": {"strategy": "type", "to": "i64"}}),
         ("people/name", {"cast": {"strategy": "custom", "forward": {"column": "name"}}}),
         ("people/name", {"presence": "preserve"}),
     ],

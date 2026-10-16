@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import fields, is_dataclass
-from typing import Any
 
 from pydantic import BaseModel
 
@@ -20,7 +19,7 @@ _XML_CLASS_KEYS = {
 }
 
 
-def _has_xml_metadata(root_type: type[Any]) -> bool:
+def _has_xml_metadata(root_type: object) -> bool:
     meta = getattr(root_type, "Meta", None)
     if meta is not None and any(hasattr(meta, key) for key in _XML_CLASS_KEYS):
         return True
@@ -35,7 +34,7 @@ def _has_xml_metadata(root_type: type[Any]) -> bool:
     return False
 
 
-def select_binding(root_type: type, binding: str | None = None) -> NativeBinding:
+def select_binding(root_type: object, binding: str | None = None) -> NativeBinding:
     if isinstance(root_type, type) and issubclass(root_type, BaseModel):
         if binding in (None, "pydantic"):
             from mountainash_structuremap.bindings.pydantic import PydanticBinding

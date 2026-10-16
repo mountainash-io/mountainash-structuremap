@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Add canonical JSON/safe-YAML mapping and structure authoring, generated JSON Schemas, namespace assembly and a thin snapshotting fluent builder.
+- Retain explicit-null override semantics and Mountainash Frictionless relation descriptors in portable bundles; reject duplicate keys, executable YAML tags, non-JSON values and unknown envelope fields without importing native bindings.
+- Exercise portable authoring through independently declared schemas and shared-role rows in the composable mapping example.
+- Preserve populated declaration dictionaries and explicit-null selector resets across export; enforce document scalar types and required structural discriminators in the generated schema.
+- Extend isolated XML/base/current/minimum-Pydantic wheel qualification with retained mapping JSON, independent schemas and rows, external multi-column codecs, typed tuples and shared collection roles.
+- Resolve finite reusable mapping references and qualified definition selectors, including nested suffixes and recursive path-local policies; reject alias and component-delegation cycles.
+- Add ancestor-backed source keys, shared collection roles and explicit strict/lenient/unordered policies, with role-aware typed identities and preconstruction relationship validation.
+- Add batched Mountainash type casts and inverse projections, post-cast key collision checks, Shared/Exact alternatives and retained finite source-discriminator domains.
+- Qualify Mountainash revision `a9725e69831fc209307ed0c82d524e3dbf43479e`, replacing stale cast projection metadata in the previous dependency pin.
+
+- Support explicitly bound typed sequence roots, homogeneous native tuples and retained primitive Literal domains through the existing shared executor.
+- Share exact Decimal codecs between native dataclass/Pydantic and XML bindings; add native DATE cells with strict date-versus-datetime checks.
+- Add public mapping-component and directional-codec contracts; default and external mappings share preparation and iterative execution.
+- Constrain preparation with independent Mountainash schemas and per-table generated/source/composite layouts, with exact typed key identity and early direction/configuration/schema errors.
+
 - Add native Pydantic JSON parsing and serialization with native alias/configuration semantics and retained error causes, separate from canonical table reconstruction.
 - Extend existing installed-wheel qualification to Pydantic in XML/base-only environments and the minimum supported Pydantic 2.11.0.
 - Preserve native record discovery across nested plain dataclass boundaries, including mixed recursive record graphs, without advertising plain dataclass Literal validation.

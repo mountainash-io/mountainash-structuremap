@@ -39,6 +39,7 @@ class Scalar(Declaration):
     native_type: str | None = None
     facets: NumericFacets | None = None
     format: str | None = None
+    allowed_values: tuple[str | int | float | bool, ...] | None = None
 
 class XmlField(Declaration):
     kind: str
@@ -86,7 +87,8 @@ class Alternatives(Declaration):
 
 
 Shape = Annotated[
-    Scalar | RecordRef | Sequence | Map | Positional | Nullable | Alternatives, Field(discriminator="kind")
+    Scalar | RecordRef | Sequence | Map | Positional | Nullable | Alternatives,
+    Field(discriminator="kind", json_schema_extra={"required": ["kind"]}),
 ]
 
 
@@ -114,7 +116,7 @@ class RecordDefinition(Declaration):
 
 
 class StructureSpec(Declaration):
-    root: str
+    root: str | Shape
     definitions: dict[str, RecordDefinition]
 
 
@@ -122,6 +124,7 @@ class DerivedModel(BaseModel, Generic[T]):
     structure: StructureSpec
     native_types: dict[str, type]
     binding: str
+    root_native: object = Field(default=None, exclude=True)
 
 
 __all__ = [

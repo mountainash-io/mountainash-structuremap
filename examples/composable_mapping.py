@@ -8,6 +8,7 @@ from mountainash.typespec.spec import FieldSpec, TypeSpec
 from mountainash.typespec.universal_types import UniversalType as U
 
 from mountainash_structuremap import (
+    MappingRef,
     MappingSpec,
     MappingUse,
     RowLayout,
@@ -21,6 +22,7 @@ from mountainash_structuremap import (
 from mountainash_structuremap.codecs import CellLocation
 from mountainash_structuremap.components import PreparationContext
 from mountainash_structuremap.definitions import Nullable, RecordRef, Scalar
+from mountainash_structuremap.mapping import SharedCollection, TypeCast
 
 
 @dataclass(frozen=True)
@@ -143,5 +145,83 @@ def main():
         raise AssertionError("Partial-null date was accepted")
 
 
+@dataclass(frozen=True)
+class Tree:
+    label: str
+    children: list["Tree"]
+
+
+@dataclass(frozen=True)
+class Directory:
+    home: list[Address]
+    work: list[Address]
+
+
+@dataclass(frozen=True)
+class TextAmount:
+    amount: str
+    text: str
+
+
+@dataclass(frozen=True)
+class CountAmount:
+    amount: int
+    count: int
+
+
+@dataclass(frozen=True)
+class Ledger:
+    entries: list[TextAmount | CountAmount]
+
+
+def checkpoint_b():
+    recursive = MappingSpec(
+        use=MappingRef(ref="node"),
+        definitions={"node": MappingUse(component="core.record", children={
+            "children": MappingUse(component="core.sequence", children={"item": MappingRef(ref="node")}),
+        })},
+        overrides={"@Tree/label": UseOverride(column="node_label")},
+    )
+    tree = Tree("root", [Tree("branch", [Tree("leaf", [])]), Tree("other", [])])
+    plan = prepare(derive(Tree), recursive)
+    tree_rows = decompose(tree, plan)
+    assert reconstruct(tree_rows, prepare(derive(Tree), recursive)) == tree
+    print("Reusable recursive mapping:", tree_rows)
+
+    shared = MappingSpec(overrides={
+        role: UseOverride(collection_table=SharedCollection(
+            table="addresses", role_column="address_role", role=role), positions="lenient")
+        for role in ("home", "work")
+    })
+    directory = Directory([Address("Oslo", "NO"), Address("Kyoto", "JP")], [Address("Lima", "PE")])
+    plan = prepare(derive(Directory), shared)
+    directory_rows = decompose(directory, plan)
+    assert reconstruct(directory_rows, plan) == directory
+    print("Shared collection roles:", directory_rows)
+
+    ledger_mapping = MappingSpec(
+        use=MappingUse(component="core.record", children={
+            "entries": MappingUse(component="core.sequence", children={
+                "item": MappingUse(component="core.alternatives",
+                    config={"variant_layout": "shared"}, children={
+                        "TextAmount": MappingUse(component="core.record", children={
+                            "amount": MappingUse(component="core.value",
+                                config={"cast": TypeCast(to="i64").model_dump()}),
+                        }),
+                    }),
+            }),
+        }),
+    )
+    plan = prepare(derive(Ledger), ledger_mapping)
+    ledger = Ledger([TextAmount("01", "source"), CountAmount(2, 7)])
+    ledger_rows = decompose(ledger, plan)
+    restored = reconstruct(ledger_rows, plan)
+    assert [row["amount"] for row in ledger_rows["entries"]] == [1, 2]
+    assert restored == Ledger([TextAmount("1", "source"), CountAmount(2, 7)])
+    print("Shared/Exact cast cells:", ledger_rows)
+    print("Branch-specific native inverse:", restored)
+
+
 if __name__ == "__main__":
     main()
+    checkpoint_b()

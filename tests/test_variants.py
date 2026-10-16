@@ -4,7 +4,7 @@ import pytest
 
 from mountainash_structuremap import StructureMapError, decompose, derive, parse, prepare, reconstruct, serialize
 from mountainash_structuremap.codecs import Cell
-from mountainash_structuremap.mapping import AlternativeLayout, MappingSpec, SourceDiscriminator, UseOverride
+from mountainash_structuremap.mapping import AlternativeLayout, MappingSpec, UseOverride
 from tests.fixtures.variants import (
     CAT,
     DOG,
@@ -262,16 +262,6 @@ def test_real_alternative_named_null_cannot_collide_with_metadata_null_role():
     with pytest.raises(StructureMapError) as caught:
         prepare(derive(NullAlternativePets), mapping)
     assert caught.value.code == "table_collision"
-
-
-def test_source_discriminator_is_rejected_with_recorded_strategy_remedy():
-    mapping = MappingSpec(overrides={"pets": UseOverride(
-        discriminator=SourceDiscriminator(field="kind"),
-    )})
-    with pytest.raises(StructureMapError) as caught:
-        prepare(derive(NullAlternativePets), mapping)
-    assert caught.value.code == "unavailable_capability"
-    assert "strategy='recorded'" in caught.value.remedy
 
 
 def test_unknown_native_runtime_types_cannot_extend_variant_schema():

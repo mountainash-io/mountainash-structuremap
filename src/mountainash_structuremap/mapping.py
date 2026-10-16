@@ -38,6 +38,7 @@ class SharedCollection(_Canonical):
     strategy: Literal["shared"] = "shared"
     table: _NonEmpty
     role_column: _NonEmpty
+    role: _NonEmpty | None = None
 
 
 class TypeCast(_Canonical):
@@ -87,8 +88,6 @@ class UseOverride(_Canonical):
     cast: CastStrategy | None = None
     presence: Literal["normalize", "preserve"] | None = None
     value_space: Literal["typed", "lexical"] | None = None
-    json_numbers: Literal["practical", "exact"] | None = None
-    duplicate_members: Literal["reject", "last", "first", "preserve"] | None = None
     open_content: Literal["fragment", "drop", "structured", "reject"] | None = None
 
 
@@ -102,8 +101,6 @@ class MappingDefaults(_Canonical):
     role_discriminator: Literal["separate", "combined"] | None = None
     shared_types: Literal["exact", "widen"] | None = None
     value_space: Literal["typed", "lexical"] | None = None
-    json_numbers: Literal["practical", "exact"] | None = None
-    duplicate_members: Literal["reject", "last", "first", "preserve"] | None = None
     open_content: Literal["fragment", "drop", "structured", "reject"] | None = None
 
 

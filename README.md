@@ -49,17 +49,21 @@ the executor's retained schema.
 - Document-local generated occurrence keys; independently supplied nonempty
   string keys are accepted and need not resemble generated keys.
 - Strict positions: unique within each parent collection, in the nonnegative
-  signed-i64 range. Gaps are accepted; subsequent decomposition renumbers from zero.
+  signed-i64 range. Gaps are accepted; decomposition renumbers from zero.
+- Explicit lenient ordering: positions sort ascending, ties preserve delivery
+  order, and null positions come last. Omitted position columns use delivery
+  order. Unordered collections need no position column.
 - Global `Naming` configuration for metadata namespace and `snake_case`/`preserve`
   columns. Name collisions fail rather than overwrite.
 
 Tables use `_sm_key`, `_sm_parent` and `_sm_position` by default. Inline records
 share their enclosing row's key; descendants attach to that row, not a fictitious
-inline-record row. Table and row delivery order do not control reconstruction.
+inline-record row. Strict collection positions, not delivery order, control reconstruction.
 Source instances and supplied tables are not mutated.
 
-Reconstruction requires the exact prepared table and column sets, including
-empty tables, and exactly one root row. It validates links, positions, null
+Reconstruction requires the prepared table and column sets, including empty
+tables, and exactly one root row. Lenient ordering permits omitted position
+metadata, not missing payload or key columns. It validates links, positions, null
 markers, active scalar cells and row reachability before calling any native
 constructor. A malformed later sibling or detached row cannot cause partial
 native construction. Exceptions raised by native constructors themselves retain
@@ -115,11 +119,12 @@ paths are exhausted, execution reuses an ordinary recursive role. Prepared
 programs do not retain mutable mapping input. Unknown paths, inapplicable options,
 and physical table/column collisions fail before data is read.
 
-Explicit generated keys, strict positions, ordered collections, separate tables,
-and normalized presence select the implemented policies. Known later strategies
-are declarable but fail during preparation rather than being silently ignored.
-Canonical strategy types live in `mountainash_structuremap.mapping`; these
-declarations do not by themselves supply casts or additional binding capabilities.
+Generated keys, strict positions, ordered collections, separate tables and
+normalized presence remain defaults. Source keys, shared collection roles,
+lenient ordering and type casts are explicit policies. Canonical strategy types
+live in `mountainash_structuremap.mapping`. Custom expression casts, EAV,
+Shared/Widen and preserved supplied-field presence remain unavailable and fail
+during preparation rather than silently falling back.
 
 ### Composable mappings and independent schemas
 
@@ -160,6 +165,14 @@ Built-in identities are `core.value`, `core.record`, `core.sequence`, `core.map`
 children are native member names, `item`, `key`/`value`, numeric slot strings or
 alternative keys respectively.
 
+`MappingRef(ref=..., config=..., children=...)` reuses a declaration from
+`MappingSpec.definitions`; overlays stay local to that use. Alias-only cycles
+and non-structural component-delegation cycles fail. Structural self/mutual
+recursion remains finite. `@Address` selects every use of that definition;
+`@Address/city` and longer member suffixes select descendants. Use qualified
+definition names when a short name is ambiguous. Exact native-path overrides
+win over definition selectors; equally specific conflicting selectors fail.
+
 `RowLayout` selects physical relationship columns per table. For example:
 
 ```python
@@ -174,13 +187,31 @@ layouts = {
 ```
 
 Use these in `MappingSpec(layouts=layouts)` alongside explicit table placement.
-Source/composite keys must be non-null and unique. Parent columns correspond in
-order and physical type to the parent key. Position columns retain strict ordering:
-gaps are accepted, and decomposition emits positions from zero. Parent/position
-columns may overlap payload only when the values agree. Generated keys remain the
-default; explicit layouts can rename key, parent, position, map-key, null-marker
-and parent-table metadata. Sufficient source layouts need no extra `_sm_*` columns.
-Map keys remain native strings; key codecs must use one physical STRING column.
+Source/composite keys must be non-null and unique within their table and role.
+`SourceKey(columns=(...))` can carry mapped ancestor fields into a child key.
+Multiple ancestor origins with the same column name are ambiguous: rename the
+source columns explicitly. Parent columns correspond in order and physical type
+to the parent key. Parent/position columns may overlap payload only when values
+agree. Both directions reject contradictory carry values; keys use exact typed
+identity, so `True` and `1` are distinct.
+
+Generated keys remain the default. Explicit layouts rename key, parent, position,
+map-key, null-marker, role and parent-table metadata. Sufficient source layouts
+need no extra `_sm_*` columns. Map keys remain native strings; key codecs must use
+one physical STRING column.
+
+`SharedCollection(table=..., role_column=..., role=...)` places distinct collection
+uses in one table. The role defaults to the native use path; use explicit roles
+when sharing alternative branches. Roles retain independent keys and position
+domains; equal application IDs never merge occurrences. Configured parent-table
+selectors must agree with the role's permitted parent tables.
+
+`TypeCast(to=..., on_failure="error"|"null")` uses Mountainash's dtype vocabulary
+and projections. Preparation declares post-cast physical schemas without sampling
+data. Execution batches each scalar use's owned columns, then validates finalized
+keys; casting `"01"` and `"1"` to the same source key is an error. Reconstruction
+applies the reverse native-column projection before native construction. Casts
+can normalize values (`"01"` → `1` → `"1"`); they do not promise lexical identity.
 
 `EncodingCodec` needs `fields` and `encode`; `DecodingCodec` needs `fields`, `check`
 and `decode`. `ScalarCodec` combines them. Codecs use tuples of cells and
@@ -190,10 +221,10 @@ does not need unused methods. Select `directions=frozenset({"decompose"})` or
 unprepared direction before touching input. Reconstruction checks scalar cells
 before constructing native records.
 
-Execution buffers rows and relationship indexes; this is not a streaming claim.
-See `examples/composable_mapping.py` for independent schemas and rows, reusable
-address components, a three-integer date codec, source/composite keys and typed
-tuple reconstruction without a preceding decomposition.
+Execution buffers rows, scalar projection batches and relationship indexes; this
+is not a streaming claim. See `examples/composable_mapping.py` for independent
+schemas/rows, reusable address components, a three-integer date codec, source
+keys, recursive references, shared roles and branch-specific cast reconstruction.
 
 ### Alternatives
 
@@ -202,13 +233,20 @@ associations, not inference from populated payload columns. Unknown runtime
 classes or QNames cannot extend a prepared schema.
 
 - Repeated `variant_layout="split"` uses separate alternative tables with one
-  shared position domain per collection occurrence. Positions may have gaps;
-  duplicates across alternative tables are invalid.
+  shared position domain per collection occurrence. Strict positions may have
+  gaps but cannot repeat across alternative tables. Lenient null/tied positions
+  follow alternative declaration order, then delivery order within each table.
 - `variant_layout="prefixed"` puts alternatives in one occurrence row with
   disjoint payload projections. Inactive payload cells and descendants must be
   empty. Singular alternatives use inline projections or finite recursive links.
-- Recorded discriminators can configure their column and tag values. Source
-  discriminator inference, Shared and EAV layouts remain unavailable.
+- `variant_layout="shared"` merges compatible common columns using fully declared
+  post-cast physical types (Shared/Exact). Branch-only fields and descendants must
+  be empty for inactive alternatives.
+- Recorded discriminators configure string columns and tags. A
+  `SourceDiscriminator(field=...)` retains a scalar source field with finite,
+  disjoint declared tag domains, such as primitive `Literal` values. It supports
+  Split, Prefixed and Shared, preserves numeric tags, and rejects discriminator
+  casts, ambiguous domains and unexpected runtime tags. EAV remains unavailable.
 - `UseOverride.alternatives` configures each declared key's `prefix`, and its
   `table` for repeated Split. The reserved `$null` layout names the separate
   null-occurrence table; a selected nillable XML payload is distinct from that
@@ -458,7 +496,7 @@ Requires Python 3.12+, Git and Hatch 1.14+; Hatch manages its configured uv
 installer. The package requires Pydantic 2.11+ for native name-only validation.
 
 Mountainash is sourced directly from GitHub at a pinned commit on `develop`:
-`c98f35ace19562dac0612fdd9f6c580a59bdc5f8`. The dependency in `pyproject.toml`
+`a9725e69831fc209307ed0c82d524e3dbf43479e`. The dependency in `pyproject.toml`
 is the single pin used by source environments, wheel installation and CI.
 No package-index publication or sibling checkout is required.
 

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Resolve finite reusable mapping references and qualified definition selectors, including nested suffixes and recursive path-local policies; reject alias and component-delegation cycles.
+- Add ancestor-backed source keys, shared collection roles and explicit strict/lenient/unordered policies, with role-aware typed identities and preconstruction relationship validation.
+- Add batched Mountainash type casts and inverse projections, post-cast key collision checks, Shared/Exact alternatives and retained finite source-discriminator domains.
+- Qualify Mountainash revision `a9725e69831fc209307ed0c82d524e3dbf43479e`, replacing stale cast projection metadata in the previous dependency pin.
+
 - Support explicitly bound typed sequence roots, homogeneous native tuples and retained primitive Literal domains through the existing shared executor.
 - Share exact Decimal codecs between native dataclass/Pydantic and XML bindings; add native DATE cells with strict date-versus-datetime checks.
 - Add public mapping-component and directional-codec contracts; default and external mappings share preparation and iterative execution.

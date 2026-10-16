@@ -34,9 +34,11 @@ the executor's retained schema.
 
 ## Supported behavior
 
-- Dataclass record roots; `str`, `bool`, signed-i64 `int` and `float` fields.
+- Dataclass record roots and explicitly selected `binding="dataclass"` typed
+  `list[T]` / `tuple[T, ...]` roots; `str`, `bool`, signed-i64 `int`, `float`,
+  homogeneous primitive `Literal`, exact `Decimal` and native `date` fields.
 - Nullable scalar fields, inline records, recursive dataclass links, lists,
-  string-key maps and fixed tuples (including empty tuples).
+  homogeneous tuples, string-key maps and fixed tuples (including empty tuples).
 - Separate tables for collection uses and recursive role families, including
   nested collections and repeated uses of the same native class.
 - Required empty records, all-null record occurrences, empty nested containers,
@@ -62,6 +64,12 @@ markers, active scalar cells and row reachability before calling any native
 constructor. A malformed later sibling or detached row cannot cause partial
 native construction. Exceptions raised by native constructors themselves retain
 their cause; the package cannot roll back those constructors' external effects.
+
+Typed sequence roots retain one document-root row and a positioned `root__item`
+table, including for an empty sequence. No synthetic native record is required.
+Unfaceted Decimal values use exact lexical STRING cells, not floats; date fields
+use DATE cells and reject datetime values. Partial dates declared as strings stay
+strings. Literal domains are checked in both directions before native construction.
 
 Recursive roles use finite table families, not a table per runtime depth.
 `_sm_parent_table` disambiguates links when a role can attach to multiple parent
@@ -112,6 +120,80 @@ and normalized presence select the implemented policies. Known later strategies
 are declarable but fail during preparation rather than being silently ignored.
 Canonical strategy types live in `mountainash_structuremap.mapping`; these
 declarations do not by themselves supply casts or additional binding capabilities.
+
+### Composable mappings and independent schemas
+
+`prepare(model, mapping, *, relations=None, components=(), directions=...)` uses
+one compiler and shared executor for default mappings and external components.
+`relations` is a table-name-to-Mountainash-`TypeSpec` mapping. When supplied, its
+table/column sets and physical types constrain preparation; data never determines
+the schema, including empty collections and all-null fields. Preparation snapshots
+the declarations and schemas rather than retaining caller-owned mutable inputs.
+
+`MappingUse(component=..., config=..., children=...)` selects an exact component
+identity. Supply implementations explicitly in `components`; loading canonical
+declarations does not import application modules or discover plugins. Missing and
+duplicate implementations fail before data access. `MappingSpec.use=None` uses
+the built-in component, and omitted children use their built-ins.
+
+Components implement `MappingComponent.prepare(use, context)` from
+`mountainash_structuremap.components`. They declare their `identity` and supported
+`directions`. `PreparationContext` exposes the shape, diagnostic path, table,
+requested directions and an isolated `field(column, table=...)` view of an
+independently declared field. Its operations are:
+
+- `value(codec=..., options=...)` for one or several physical cells;
+- `record(children, options=...)` for named members;
+- `sequence(item, options=...)` and `map(key=..., value=..., options=...)`;
+- `positional(items, options=...)` for integer-indexed slots;
+- `alternatives(branches, options=...)` for declared branch keys;
+- `apply(node)` to delegate preparation at the same structural use.
+
+Each use contributes one structural operation. Child operations go through shared
+preparation, not a component-owned traversal. Nullable wrappers retain core null
+semantics. Components must validate accepted shapes, configuration and child names,
+and document normalization and buffering requirements. Conflicting component and
+selector choices fail rather than silently taking precedence.
+
+Built-in identities are `core.value`, `core.record`, `core.sequence`, `core.map`,
+`core.positional` and `core.alternatives`. Their config uses `UseOverride` fields;
+children are native member names, `item`, `key`/`value`, numeric slot strings or
+alternative keys respectively.
+
+`RowLayout` selects physical relationship columns per table. For example:
+
+```python
+from mountainash_structuremap import RowLayout
+
+layouts = {
+    "orders": RowLayout(key=("order_id",)),
+    "lines": RowLayout(
+        key=("order_id", "line_no"), parent=("order_id",), position="line_no",
+    ),
+}
+```
+
+Use these in `MappingSpec(layouts=layouts)` alongside explicit table placement.
+Source/composite keys must be non-null and unique. Parent columns correspond in
+order and physical type to the parent key. Position columns retain strict ordering:
+gaps are accepted, and decomposition emits positions from zero. Parent/position
+columns may overlap payload only when the values agree. Generated keys remain the
+default; explicit layouts can rename key, parent, position, map-key, null-marker
+and parent-table metadata. Sufficient source layouts need no extra `_sm_*` columns.
+Map keys remain native strings; key codecs must use one physical STRING column.
+
+`EncodingCodec` needs `fields` and `encode`; `DecodingCodec` needs `fields`, `check`
+and `decode`. `ScalarCodec` combines them. Codecs use tuples of cells and
+`CellLocation` from the public `codecs` module. An encode-only or decode-only codec
+does not need unused methods. Select `directions=frozenset({"decompose"})` or
+`frozenset({"reconstruct"})`; the default prepares both. Execution rejects an
+unprepared direction before touching input. Reconstruction checks scalar cells
+before constructing native records.
+
+Execution buffers rows and relationship indexes; this is not a streaming claim.
+See `examples/composable_mapping.py` for independent schemas and rows, reusable
+address components, a three-integer date codec, source/composite keys and typed
+tuple reconstruction without a preceding decomposition.
 
 ### Alternatives
 
@@ -299,10 +381,10 @@ The supported data shapes use the shared table compiler and executor:
 | Variants | Singular and repeated Split/Prefixed layouts, recorded tags, and Literal-tagged discriminated model unions. Table payload validation precedes native construction. |
 
 `Annotated` metadata is left to native validation, including constraints nested
-inside containers. Literal lowering applies only to BaseModel fields; ordinary
-dataclass Literal fields remain unsupported because their constructors do not
-enforce those constraints. Richer scalar types such as `date`, Decimal, enums and
-binary are not given an implicit representation.
+inside containers. Homogeneous primitive Literal domains are retained and checked
+by StructureMap, including nested plain dataclasses; this does not claim general
+dataclass validation. Native `date` and exact Decimal fields use the shared scalar
+codecs. Enums and binary fields remain outside this Pydantic binding's coverage.
 
 Direct reads retain fields excluded from native serialization and captured
 default/factory values. Computed properties are not projected into columns, and
@@ -356,10 +438,10 @@ exceptions remain the chained cause.
 
 ### Not yet executable
 
-Source-backed keys, lenient/unordered collections, shared tables, casts,
-presence preservation and other binding-specific strategies are not executable.
-Preparation refuses those requests. The canonical definitions and policy
-declarations can describe more than this executor supports.
+The `SourceKey` strategy's ancestor resolution, lenient/unordered collections,
+shared tables, casts, presence preservation and other binding-specific strategies
+are not yet executable. Explicit source/composite `RowLayout` mappings above are
+supported. Preparation refuses unavailable strategies rather than weakening them.
 
 YAML/JSON mapping authoring, Parquet output and incremental execution are separate work.
 
@@ -390,6 +472,7 @@ hatch run test:test
 hatch run test:python examples/dataclass_roundtrip.py
 hatch run test:python examples/xml_roundtrip.py
 hatch run test:python examples/pydantic_roundtrip.py
+hatch run test:python examples/composable_mapping.py
 hatch run ruff:check
 hatch run mypy:check
 hatch build

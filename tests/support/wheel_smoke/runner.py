@@ -211,15 +211,16 @@ def _assert_document(value) -> None:
 
 
 def _assert_gapped_root_positions(tables, prepared) -> None:
-    root_key = tables[prepared.root_table][0][prepared.key_column]
-    root_children = [
-        row
+    root_layout = prepared.tables[prepared.root_table].layout
+    root_key = tuple(tables[prepared.root_table][0][column] for column in root_layout.key)
+    positions = [
+        row[prepared.tables[table_name].layout.position]
         for table_name, rows in tables.items()
         if table_name != prepared.root_table
         for row in rows
-        if row.get(prepared.parent_column) == root_key
+        if tuple(row[column] for column in prepared.tables[table_name].layout.parent) == root_key
     ]
-    assert sorted(row[prepared.position_column] for row in root_children) == [0, 7, 14]
+    assert sorted(positions) == [0, 7, 14]
 
 
 def main(mode: str) -> None:
@@ -324,7 +325,7 @@ def main(mode: str) -> None:
         mapping = _mapping()
         prepared = prepare(derive(Catalog), mapping)
         tables = _independent_catalog_tables(prepared)
-        tables["notes"][0][prepared.position_column] = tables["entries"][0][prepared.position_column]
+        tables["notes"][0][prepared.tables["notes"].layout.position] = tables["entries"][0][prepared.tables["entries"].layout.position]
         try:
             reconstruct(tables, prepared)
         except StructureMapError as error:

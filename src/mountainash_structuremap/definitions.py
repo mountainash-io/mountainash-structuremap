@@ -39,6 +39,7 @@ class Scalar(Declaration):
     native_type: str | None = None
     facets: NumericFacets | None = None
     format: str | None = None
+    allowed_values: tuple[str | int | float | bool, ...] | None = None
 
 class XmlField(Declaration):
     kind: str
@@ -114,7 +115,7 @@ class RecordDefinition(Declaration):
 
 
 class StructureSpec(Declaration):
-    root: str
+    root: str | Shape
     definitions: dict[str, RecordDefinition]
 
 
@@ -122,6 +123,7 @@ class DerivedModel(BaseModel, Generic[T]):
     structure: StructureSpec
     native_types: dict[str, type]
     binding: str
+    root_native: object = Field(default=None, exclude=True)
 
 
 __all__ = [

@@ -8,7 +8,8 @@ from typing import Generic, Literal, Mapping, TypeVar
 from mountainash.typespec.spec import TypeSpec
 
 from mountainash_structuremap.bindings.contracts import CapabilityReport, NativeBinding, RecordAdapter, VariantAdapter
-from mountainash_structuremap.codecs import ScalarCodec
+from mountainash_structuremap.codecs import DecodingCodec, EncodingCodec
+from mountainash_structuremap.mapping import RowLayout
 
 T = TypeVar("T")
 
@@ -16,7 +17,7 @@ T = TypeVar("T")
 @dataclass(frozen=True)
 class ScalarProgram:
     path: str
-    codec: ScalarCodec
+    codec: EncodingCodec | DecodingCodec
     nullable: bool = False
 
 
@@ -96,11 +97,13 @@ class TablePlan:
     source_path: str
     parent_tables: tuple[str, ...]
     columns: tuple[str, ...]
+    layout: RowLayout
     _typespec: TypeSpec = field(repr=False, compare=False)
     _program: int = 0
     _kind: Literal["root", "single", "sequence", "map"] = "root"
     _nullable_member: bool = False
     _position_group: str | None = None
+    map_key_codec: EncodingCodec | DecodingCodec | None = None
 
     @property
     def typespec(self) -> TypeSpec:
@@ -118,12 +121,7 @@ class PreparedMapping(Generic[T]):
     binding: NativeBinding
     capabilities: CapabilityReport
     record_adapters: Mapping[str, RecordAdapter]
-    key_column: str
-    parent_column: str
-    position_column: str
-    map_key_column: str
-    null_column: str
-    parent_table_column: str
+    directions: frozenset[Literal["decompose", "reconstruct"]] = frozenset({"decompose", "reconstruct"})
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "programs", MappingProxyType(dict(self.programs)))

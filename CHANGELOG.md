@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Support explicitly bound typed sequence roots, homogeneous native tuples and retained primitive Literal domains through the existing shared executor.
+- Share exact Decimal codecs between native dataclass/Pydantic and XML bindings; add native DATE cells with strict date-versus-datetime checks.
+- Add public mapping-component and directional-codec contracts; default and external mappings share preparation and iterative execution.
+- Constrain preparation with independent Mountainash schemas and per-table generated/source/composite layouts, with exact typed key identity and early direction/configuration/schema errors.
+
 - Add native Pydantic JSON parsing and serialization with native alias/configuration semantics and retained error causes, separate from canonical table reconstruction.
 - Extend existing installed-wheel qualification to Pydantic in XML/base-only environments and the minimum supported Pydantic 2.11.0.
 - Preserve native record discovery across nested plain dataclass boundaries, including mixed recursive record graphs, without advertising plain dataclass Literal validation.

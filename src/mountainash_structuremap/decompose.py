@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import TypeVar, cast
 
-from mountainash_structuremap.codecs import Cell
+from mountainash_structuremap.codecs import Cell, EncodingCodec
 from mountainash_structuremap.errors import StructureMapError
 from mountainash_structuremap.prepared import (
     LinkProgram,
@@ -12,34 +12,81 @@ from mountainash_structuremap.prepared import (
     RecordProgram,
     ScalarProgram,
     SequenceProgram,
+    TablePlan,
     TupleProgram,
     VariantProgram,
 )
 
-_I64_MIN = -(2**63)
-_I64_MAX = 2**63 - 1
 T = TypeVar("T")
-_Task = tuple[str, int, object, dict[str, Cell], str, str, int, str | None]
+
+_Task = tuple[str, int, object, dict[str, Cell], str, str, int, object | None]
+
+
+def _same_cell(left: Cell, right: Cell) -> bool:
+    return type(left) is type(right) and left == right
+
+
+def _key_identity(cells: tuple[Cell, ...]) -> tuple[tuple[type, Cell], ...]:
+    return tuple((type(cell), cell) for cell in cells)
 
 
 def _data_error(code: str, message: str, *, path: str, remedy: str) -> StructureMapError:
     return StructureMapError(code, message, path=path, owner="executor restriction", remedy=remedy)
 
 
+
+def _encode_map_key(value: object, plan: TablePlan, path: str) -> str:
+    if type(value) is not str:
+        raise _data_error(
+            "native_type_mismatch",
+            "Map keys must be strings",
+            path=path,
+            remedy="Supply string map keys",
+        )
+    codec = plan.map_key_codec
+    if codec is None:
+        raise _data_error(
+            "invalid_prepared_mapping",
+            "Map table has no prepared map-key codec",
+            path=path,
+            remedy="Prepare the map key through its table component",
+        )
+    cells = cast(EncodingCodec, codec).encode(value)
+    if len(cells) != 1 or type(cells[0]) is not str:
+        raise _data_error(
+            "invalid_map_key",
+            "Map key codec must produce one STRING cell",
+            path=path,
+            remedy="Prepare a map key codec with one STRING field",
+        )
+    return cells[0]
+
 def _native_scalar(value: object, program: ScalarProgram) -> tuple[Cell, ...]:
+    codec = cast(EncodingCodec, program.codec)
     if value is None:
         if program.nullable:
-            return tuple(None for _ in program.codec.fields)
+            return tuple(None for _ in codec.fields)
         raise _data_error(
             "null_not_allowed", "Non-nullable scalar has a null value", path=program.path,
             remedy="Supply a value or declare the member nullable",
         )
-    return program.codec.encode(value)
+    return codec.encode(value)
 
 
 def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str, Cell]]]:
-    """Project one native value into rows by iteratively walking its prepared graph."""
+    if "decompose" not in prepared.directions:
+        raise StructureMapError(
+            "unavailable_direction",
+            "Prepared mapping does not support decomposition",
+            remedy="Prepare with the decompose direction",
+        )
     tables: dict[str, list[dict[str, Cell]]] = {name: [] for name in prepared.tables}
+    created_rows: list[tuple[str, dict[str, Cell]]] = []
+    parent_rows: dict[int, tuple[dict[str, Cell], str]] = {}
+    pending_metadata: dict[int, dict[str, Cell]] = {}
+    written_columns: dict[int, set[str]] = {}
+    row_handles: dict[int, str] = {}
+    row_tables: dict[int, str] = {}
     counter = 0
     ancestry: set[int] = set()
 
@@ -49,15 +96,36 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
         counter += 1
         return key
 
-    def empty_row(table_name: str, key: str, parent: str | None = None) -> dict[str, Cell]:
+    def empty_row(table_name: str, handle: str) -> dict[str, Cell]:
         plan = prepared.tables[table_name]
         result: dict[str, Cell] = {column: None for column in plan.columns}
-        result[prepared.key_column] = key
-        if parent is not None:
-            result[prepared.parent_column] = parent
-            if len(plan.parent_tables) > 1:
-                result[prepared.parent_table_column] = ""
+        tables[table_name].append(result)
+        created_rows.append((table_name, result))
+        row_tables[id(result)] = table_name
+        row_handles[id(result)] = handle
+        pending_metadata[id(result)] = {}
+        written_columns[id(result)] = set()
         return result
+
+    def attach(row: dict[str, Cell], parent: dict[str, Cell], parent_table: str) -> None:
+        parent_rows[id(row)] = (parent, parent_table)
+
+    def write_cell(row: dict[str, Cell], column: str, value: Cell) -> None:
+        row[column] = value
+        written_columns[id(row)].add(column)
+
+    def queue_metadata(row: dict[str, Cell], column: str | None, value: Cell) -> None:
+        if column is None:
+            return
+        queued = pending_metadata[id(row)]
+        if column in queued and not _same_cell(queued[column], value):
+            raise _data_error(
+                "invalid_prepared_mapping",
+                f"Conflicting metadata values for column {column!r}",
+                path=prepared.tables[row_tables[id(row)]].source_path,
+                remedy="Prepare distinct metadata columns for each row role",
+            )
+        queued[column] = value
 
     def record_type(instance: object, program: RecordProgram) -> None:
         expected = prepared.native_types.get(program.definition)
@@ -87,7 +155,7 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
             current = prepared.programs[pending.pop()]
             if isinstance(current, ScalarProgram):
                 for field in current.codec.fields:
-                    row[field.name] = None
+                    write_cell(row, field.name, None)
             elif isinstance(current, RecordProgram):
                 pending.extend(child for _, child in reversed(current.members))
             elif isinstance(current, TupleProgram):
@@ -95,24 +163,15 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
             elif isinstance(current, VariantProgram):
                 if current.repeated and current.layout == "split":
                     continue
-                row[current.discriminator_column] = None
+                queue_metadata(row, current.discriminator_column, None)
                 if current.payload_null_column is not None:
-                    row[current.payload_null_column] = False
+                    queue_metadata(row, current.payload_null_column, False)
                 pending.extend(branch.program for branch in reversed(current.alternatives))
             elif isinstance(current, NullProgram):
                 continue
-    root_program = prepared.programs.get(prepared.root)
-    if not isinstance(root_program, RecordProgram):
-        raise _data_error(
-            "invalid_prepared_mapping",
-            "Prepared root is not a record",
-            path="",
-            remedy="Prepare a native record root",
-        )
 
     root_key = new_key()
     root_row = empty_row(prepared.root_table, root_key)
-    tables[prepared.root_table].append(root_row)
     # (op, program id, value, containing row, containing key, containing table, position, map key)
     stack: list[_Task] = [("value", prepared.root, value, root_row, root_key, prepared.root_table, -1, None)]
     while stack:
@@ -132,16 +191,17 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
                 )
             member_plan = prepared.tables[edge.table]
             child_key = new_key()
-            child_row = empty_row(edge.table, child_key, row_key)
-            if len(member_plan.parent_tables) > 1:
-                child_row[prepared.parent_table_column] = row_table
-            if prepared.position_column in member_plan.columns:
-                child_row[prepared.position_column] = position
+            child_row = empty_row(edge.table, child_key)
+            attach(child_row, row, row_table)
+            layout = member_plan.layout
+            if layout.parent_table is not None:
+                queue_metadata(child_row, layout.parent_table, row_table)
+            if layout.position is not None:
+                queue_metadata(child_row, layout.position, position)
             if isinstance(edge, MapProgram):
-                child_row[prepared.map_key_column] = map_key
+                queue_metadata(child_row, layout.map_key, _encode_map_key(map_key, member_plan, edge.path))
             if member_plan._nullable_member:
-                child_row[prepared.null_column] = native_value is None
-            tables[edge.table].append(child_row)
+                queue_metadata(child_row, layout.null_column, native_value is None)
             if native_value is None and member_plan._nullable_member:
                 continue
             stack.append(("value", member_plan._program, native_value, child_row, child_key, edge.table, -1, None))
@@ -165,16 +225,9 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
                             path=program.path,
                             remedy="Supply a dictionary",
                         )
-                    entries: list[tuple[str | None, object]] = []
-                    for map_key, item in native_value.items():
-                        if type(map_key) is not str:
-                            raise _data_error(
-                                "native_type_mismatch",
-                                "Map keys must be strings",
-                                path=program.path,
-                                remedy="Supply string map keys",
-                            )
-                        entries.append((map_key, item))
+                    entries: list[tuple[object | None, object]] = [
+                        (map_key, item) for map_key, item in native_value.items()
+                    ]
                 else:
                     container_type = tuple if program.container == "tuple" else list
                     if not isinstance(native_value, container_type):
@@ -200,16 +253,17 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
                             )
                         table = program.null_table
                         child_key = new_key()
-                        child_row = empty_row(table, child_key, row_key)
+                        child_row = empty_row(table, child_key)
+                        attach(child_row, row, row_table)
                         plan = prepared.tables[table]
-                        if len(plan.parent_tables) > 1:
-                            child_row[prepared.parent_table_column] = row_table
-                        child_row[prepared.position_column] = item_position
+                        layout = plan.layout
+                        if layout.parent_table is not None:
+                            queue_metadata(child_row, layout.parent_table, row_table)
+                        queue_metadata(child_row, layout.position, item_position)
                         if program.map_values:
-                            child_row[prepared.map_key_column] = map_key
-                        child_row[prepared.null_column] = True
-                        child_row[program.discriminator_column] = None
-                        tables[table].append(child_row)
+                            queue_metadata(child_row, layout.map_key, _encode_map_key(map_key, plan, program.path))
+                        queue_metadata(child_row, layout.null_column, True)
+                        queue_metadata(child_row, program.discriminator_column, None)
                         continue
                     alternative_key, payload = program.adapter.select(item)
                     branch = branch_by_key.get(alternative_key)
@@ -229,17 +283,18 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
                         )
                     table = branch.table
                     child_key = new_key()
-                    child_row = empty_row(table, child_key, row_key)
+                    child_row = empty_row(table, child_key)
+                    attach(child_row, row, row_table)
                     plan = prepared.tables[table]
-                    if len(plan.parent_tables) > 1:
-                        child_row[prepared.parent_table_column] = row_table
-                    child_row[prepared.position_column] = item_position
+                    layout = plan.layout
+                    if layout.parent_table is not None:
+                        queue_metadata(child_row, layout.parent_table, row_table)
+                    queue_metadata(child_row, layout.position, item_position)
                     if program.map_values:
-                        child_row[prepared.map_key_column] = map_key
-                    child_row[program.discriminator_column] = branch.tag
+                        queue_metadata(child_row, layout.map_key, _encode_map_key(map_key, plan, program.path))
+                    queue_metadata(child_row, program.discriminator_column, branch.tag)
                     if program.payload_null_column is not None:
-                        child_row[program.payload_null_column] = payload is None
-                    tables[table].append(child_row)
+                        queue_metadata(child_row, program.payload_null_column, payload is None)
                     if payload is not None:
                         jobs.append((branch.program, payload, child_row, child_key, table))
                 for branch_program, payload, child_row, child_key, table in reversed(jobs):
@@ -271,9 +326,9 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
                     path=program.path,
                     remedy="Supply a non-null payload or declare the alternative nullable",
                 )
-            row[program.discriminator_column] = branch.tag
+            queue_metadata(row, program.discriminator_column, branch.tag)
             if program.payload_null_column is not None:
-                row[program.payload_null_column] = payload is None
+                queue_metadata(row, program.payload_null_column, payload is None)
             if payload is not None:
                 stack.append(("value", branch.program, payload, row, row_key, row_table, -1, None))
             continue
@@ -281,7 +336,9 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
             continue
         if isinstance(program, ScalarProgram):
             values = _native_scalar(native_value, program)
-            row.update((field.name, cell) for field, cell in zip(program.codec.fields, values, strict=True))
+            codec = cast(EncodingCodec, program.codec)
+            for field, cell in zip(codec.fields, values, strict=True):
+                write_cell(row, field.name, cell)
             continue
         if isinstance(program, RecordProgram):
             if native_value is None:
@@ -381,10 +438,10 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
                 )
             child_plan = prepared.tables[program.table]
             child_key = new_key()
-            child_row = empty_row(program.table, child_key, row_key)
-            if len(child_plan.parent_tables) > 1:
-                child_row[prepared.parent_table_column] = row_table
-            tables[program.table].append(child_row)
+            child_row = empty_row(program.table, child_key)
+            attach(child_row, row, row_table)
+            if child_plan.layout.parent_table is not None:
+                queue_metadata(child_row, child_plan.layout.parent_table, row_table)
             stack.append(("value", child_plan._program, native_value, child_row, child_key, program.table, -1, None))
             continue
         raise _data_error(
@@ -393,4 +450,142 @@ def decompose(value: T, prepared: PreparedMapping[T]) -> dict[str, list[dict[str
             path=program.path,
             remedy="Prepare a supported value shape",
         )
+    row_keys: dict[int, tuple[Cell, ...]] = {}
+    unique_keys: dict[str, set[tuple[tuple[type, Cell], ...]]] = {}
+    for table_name, row in created_rows:
+        plan = prepared.tables[table_name]
+        layout = plan.layout
+        row_id = id(row)
+        metadata = pending_metadata[row_id]
+        for column, expected in metadata.items():
+            if column in written_columns[row_id] and not _same_cell(row[column], expected):
+                raise _data_error(
+                    "contradictory_metadata",
+                    f"Payload value for {column!r} contradicts its row-layout metadata",
+                    path=plan.source_path,
+                    remedy="Use the same value as the declared row metadata or rename the payload column",
+                )
+            row[column] = expected
+
+        parent_info = parent_rows.get(row_id)
+        if parent_info is None:
+            if layout.parent:
+                raise _data_error(
+                    "invalid_prepared_mapping",
+                    "Row layout declares parent fields without a parent occurrence",
+                    path=plan.source_path,
+                    remedy="Prepare parent fields only for linked row tables",
+                )
+        else:
+            parent_row, parent_table = parent_info
+            if parent_table not in plan.parent_tables:
+                raise _data_error(
+                    "invalid_prepared_mapping",
+                    f"Parent table {parent_table!r} is not allowed for this row",
+                    path=plan.source_path,
+                    remedy="Prepare a table relationship to the enclosing row",
+                )
+            parent_key = row_keys.get(id(parent_row))
+            if parent_key is None:
+                raise _data_error(
+                    "invalid_prepared_mapping",
+                    "Parent occurrence key was not finalized before its child",
+                    path=plan.source_path,
+                    remedy="Prepare a finite parent-before-child table graph",
+                )
+            if len(layout.parent) != len(parent_key):
+                raise _data_error(
+                    "invalid_prepared_mapping",
+                    "Parent layout fields do not match the parent key arity",
+                    path=plan.source_path,
+                    remedy="Declare one parent column for each parent key column",
+                )
+            if len(plan.parent_tables) > 1 and layout.parent_table is None:
+                raise _data_error(
+                    "invalid_prepared_mapping",
+                    "Multiple parent tables require a row-layout parent-table column",
+                    path=plan.source_path,
+                    remedy="Declare parent_table in the row layout",
+                )
+            for column, expected in zip(layout.parent, parent_key, strict=True):
+                if column not in row:
+                    raise _data_error(
+                        "invalid_prepared_mapping",
+                        f"Parent key column {column!r} is absent from the table",
+                        path=plan.source_path,
+                        remedy="Include each parent column in the table schema",
+                    )
+                if column in written_columns[row_id] or column in metadata:
+                    if not _same_cell(row[column], expected):
+                        raise _data_error(
+                            "contradictory_parent_key",
+                            f"Payload value for parent key column {column!r} contradicts its parent",
+                            path=plan.source_path,
+                            remedy="Use the parent key value or rename the payload column",
+                        )
+                else:
+                    row[column] = expected
+
+        if layout.generated:
+            if len(layout.key) != 1:
+                raise _data_error(
+                    "invalid_prepared_mapping",
+                    "Generated occurrence keys require exactly one column",
+                    path=plan.source_path,
+                    remedy="Use one key column for a generated row layout",
+                )
+            key_cells: tuple[Cell, ...] = (row_handles[row_id],)
+            column = layout.key[0]
+            if column not in row:
+                raise _data_error(
+                    "invalid_prepared_mapping",
+                    f"Generated key column {column!r} is absent from the table",
+                    path=plan.source_path,
+                    remedy="Include the generated key column in the table schema",
+                )
+            if column in written_columns[row_id] or column in metadata:
+                if not _same_cell(row[column], key_cells[0]):
+                    raise _data_error(
+                        "contradictory_key",
+                        f"Payload value for generated key column {column!r} contradicts the generated key",
+                        path=plan.source_path,
+                        remedy="Rename the payload column or use the generated key value",
+                    )
+            else:
+                row[column] = key_cells[0]
+        else:
+            if any(column not in row for column in layout.key):
+                raise _data_error(
+                    "invalid_prepared_mapping",
+                    "Source key column is absent from the table",
+                    path=plan.source_path,
+                    remedy="Include all source key columns in the table schema",
+                )
+            key_cells = tuple(row[column] for column in layout.key)
+            if any(cell is None for cell in key_cells):
+                raise _data_error(
+                    "invalid_key",
+                    "Source occurrence key contains a null cell",
+                    path=plan.source_path,
+                    remedy="Supply non-null values for every source key column",
+                )
+        identity = _key_identity(key_cells)
+        try:
+            seen = unique_keys.setdefault(table_name, set())
+            if identity in seen:
+                raise _data_error(
+                    "duplicate_key",
+                    f"Duplicate occurrence key {key_cells!r}",
+                    path=plan.source_path,
+                    remedy="Supply unique key cells within each table",
+                )
+            seen.add(identity)
+        except TypeError as exc:
+            raise _data_error(
+                "invalid_key",
+                "Occurrence key cells must be hashable",
+                path=plan.source_path,
+                remedy="Use supported scalar key cells",
+            ) from exc
+        row_keys[row_id] = key_cells
     return tables

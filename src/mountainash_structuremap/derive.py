@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import is_dataclass
 from enum import Enum
-from typing import TypeVar
+from typing import TypeVar, get_origin
 
 from pydantic import BaseModel
 
 from mountainash_structuremap.bindings.selection import _has_xml_metadata, select_binding
-from mountainash_structuremap.definitions import DerivedModel, RecordDefinition, StructureSpec
+from mountainash_structuremap.definitions import DerivedModel, RecordDefinition, RecordRef, StructureSpec
 from mountainash_structuremap.errors import StructureMapError
 
 T = TypeVar("T")
@@ -15,9 +15,11 @@ T = TypeVar("T")
 
 def derive(root_type: type[T], *, binding: str | None = None) -> DerivedModel[T]:
     is_pydantic = isinstance(root_type, type) and issubclass(root_type, BaseModel)
-    if not isinstance(root_type, type) or issubclass(root_type, Enum) or not (is_dataclass(root_type) or is_pydantic):
-        raise StructureMapError("unsupported_root", "Root must be a supported native record", owner="binding gap",
-                                remedy="Pass a dataclass or ordinary Pydantic BaseModel type")
+    is_record = isinstance(root_type, type) and not issubclass(root_type, Enum) and (is_dataclass(root_type) or is_pydantic)
+    if not is_record and not (binding == "dataclass" and get_origin(root_type) in (tuple, list)):
+        raise StructureMapError("unsupported_root", "Root must be a supported native record or explicitly bound sequence",
+                                owner="binding gap",
+                                remedy="Pass a native record, or use binding='dataclass' for list[T]/tuple[T, ...]")
     native: dict[str, type] = {}
     definitions: dict[str, RecordDefinition] = {}
     selected = select_binding(root_type, binding)
@@ -45,7 +47,8 @@ def derive(root_type: type[T], *, binding: str | None = None) -> DerivedModel[T]
         definitions[name] = described
         return name
 
-    root = register(root_type, "")
+    root_shape = selected.describe_root(root_type, register, path="")
+    root = root_shape.definition if isinstance(root_shape, RecordRef) else root_shape
     return DerivedModel(structure=StructureSpec(root=root, definitions=definitions),
-                        native_types=native, binding=selected.name)
+                        native_types=native, binding=selected.name, root_native=root_type)
 

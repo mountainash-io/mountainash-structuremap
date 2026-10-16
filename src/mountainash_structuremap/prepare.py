@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from collections.abc import Sequence as ComponentSequence
+from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from typing import Literal, TypeVar, cast
 
@@ -12,6 +14,8 @@ from pydantic import BaseModel
 
 from mountainash_structuremap.bindings.contracts import RecordAdapter
 from mountainash_structuremap.bindings.selection import select_binding
+from mountainash_structuremap.codecs import DecodingCodec, EncodingCodec
+from mountainash_structuremap.components import Direction, MappingComponent, builtin_components, default_component
 from mountainash_structuremap.definitions import (
     Alternatives,
     DerivedModel,
@@ -25,7 +29,17 @@ from mountainash_structuremap.definitions import (
     Shape,
 )
 from mountainash_structuremap.errors import StructureMapError
-from mountainash_structuremap.mapping import DeclaredBinding, MappingSpec, RecordedDiscriminator, SourceDiscriminator
+from mountainash_structuremap.mapping import (
+    DeclaredBinding,
+    MappingNode,
+    MappingRef,
+    MappingSpec,
+    MappingUse,
+    RecordedDiscriminator,
+    RowLayout,
+    SourceDiscriminator,
+    UseOverride,
+)
 from mountainash_structuremap.prepared import (
     LinkProgram,
     MapProgram,
@@ -207,9 +221,24 @@ def prepare(
     model: DerivedModel[T],
     mapping: MappingSpec | None = None,
     *,
+    relations: Mapping[str, TypeSpec] | None = None,
+    components: ComponentSequence[MappingComponent] = (),
+    directions: frozenset[Direction] = frozenset({"decompose", "reconstruct"}),
     validate_native: bool = False,
 ) -> PreparedMapping[T]:
-    mapping = mapping or MappingSpec()
+    mapping = (mapping or MappingSpec()).model_copy(deep=True)
+    model = model.model_copy(deep=True)
+    relational_schemas = deepcopy(dict(relations)) if relations is not None else None
+    directions = frozenset(directions)
+    if not directions or not directions <= {"decompose", "reconstruct"}:
+        raise StructureMapError("invalid_direction", "Select one or both execution directions",
+                                remedy="Use decompose and/or reconstruct")
+    implementations = {component.identity: component for component in builtin_components()}
+    for component in components:
+        if component.identity in implementations:
+            raise StructureMapError("duplicate_component", f"Duplicate component {component.identity!r}",
+                                    remedy="Supply exactly one implementation per identity")
+        implementations[component.identity] = component
     if mapping.root not in (None, model.structure.root):
         raise StructureMapError(
             "unknown_root",
@@ -225,7 +254,24 @@ def prepare(
             "Requested mapping binding differs from derivation",
             remedy="Derive and prepare with the same binding",
         )
-    native_binding = select_binding(model.native_types[model.structure.root], model.binding)
+    root_shape = (
+        RecordRef(definition=model.structure.root)
+        if isinstance(model.structure.root, str)
+        else model.structure.root
+    )
+    root_native = model.root_native
+    if root_native is None and isinstance(root_shape, RecordRef):
+        root_native = model.native_types.get(root_shape.definition)
+    if root_native is None:
+        raise StructureMapError(
+            "missing_native_root", "The structural root has no native association",
+            remedy="Supply root_native when constructing a DerivedModel for a non-record root",
+        )
+    native_binding = select_binding(root_native, model.binding)
+    for direction, capability in (("decompose", "Read"), ("reconstruct", "Construct")):
+        if direction in directions and not getattr(native_binding.capabilities, capability):
+            raise StructureMapError("unavailable_direction", f"Binding lacks {capability}",
+                                    remedy=f"Prepare only directions supported by {model.binding}")
 
     def _is_pydantic_record(definition: str) -> bool:
         if native_binding.name != "pydantic":
@@ -340,8 +386,9 @@ def prepare(
 
     def target(path: str) -> list[tuple[str, Shape]]:
         if not path:
-            return [("root", RecordRef(definition=model.structure.root))]
-        candidates: list[tuple[Shape, str]] = [(RecordRef(definition=model.structure.root), model.structure.root)]
+            return [("root", root_shape)]
+        root_definition = root_shape.definition if isinstance(root_shape, RecordRef) else ""
+        candidates: list[tuple[Shape, str]] = [(root_shape, root_definition)]
         for segment in path.split("/"):
             next_candidates: list[tuple[Shape, str]] = []
             pending_candidates = list(reversed(candidates))
@@ -413,7 +460,7 @@ def prepare(
             }.get(policy, f"No {policy} strategy is available in Foundation; omit the request to use this binding"),
         )
 
-    for path, override in mapping.overrides.items():
+    def validate_override(path: str, override: UseOverride) -> None:
         targets = target(path)
         kind, shape = targets[0]
         payload = collection_payload(shape) if kind == "collection" else shape
@@ -610,6 +657,135 @@ def prepare(
                 remedy="Set alternatives on a union or compound-choice use",
             )
 
+    for path, override in mapping.overrides.items():
+        validate_override(path, override)
+    overrides = mapping.overrides
+
+    class Context:
+        def __init__(self, shape: Shape, path: str, table: str):
+            self.shape, self.path, self.table = shape, path, table
+            self.directions = directions
+            self.options = overrides.get(path, UseOverride())
+            self.children: dict[str, MappingNode] = {}
+            self.codec: EncodingCodec | DecodingCodec | None = None
+            self.operation: str | None = None
+            self.pending: list[MappingNode] = []
+
+        def field(self, column: str, *, table: str | None = None) -> FieldSpec:
+            target_table = table or self.table
+            schema = relational_schemas.get(target_table) if relational_schemas is not None else None
+            if schema is not None:
+                for field in schema.fields:
+                    if field.name == column:
+                        return deepcopy(field)
+            raise StructureMapError(
+                "missing_field", f"No declared field {target_table}.{column}", path=self.path, table=target_table,
+                column=column, remedy="Supply the required table and field in relations",
+            )
+
+        def apply(self, node: MappingNode) -> None:
+            self.pending.append(node)
+
+        def select(self, operation: str, expected: type, children: Mapping[str, MappingNode],
+                   options: UseOverride | None) -> None:
+            shape = self.shape.value if isinstance(self.shape, Nullable) else self.shape
+            if self.operation is not None or not isinstance(shape, expected):
+                raise StructureMapError(
+                    "invalid_component", "Each use must contribute exactly one compatible structural operation",
+                    path=self.path, remedy="Compose one operation matching the declared shape",
+                )
+            allowed: set[str]
+            if isinstance(shape, RecordRef):
+                allowed = {member.name for member in model.structure.definitions[shape.definition].members}
+            elif isinstance(shape, Sequence):
+                allowed = {"item"}
+            elif isinstance(shape, Map):
+                allowed = {"key", "value"}
+            elif isinstance(shape, Positional):
+                allowed = {str(index) for index in range(len(shape.items))}
+            elif isinstance(shape, Alternatives):
+                allowed = {branch.key for branch in shape.choices}
+            else:
+                allowed = set()
+            unexpected = set(children) - allowed
+            if unexpected:
+                name = sorted(unexpected)[0]
+                raise StructureMapError("unknown_child", f"Unknown mapped child {name!r}",
+                                        path="/".join(filter(None, (self.path, name))),
+                                        remedy=f"Use declared children {sorted(allowed)!r}")
+            if options is not None:
+                supplied = options.model_dump(exclude_unset=True)
+                selected = self.options.model_dump(exclude_unset=True)
+                for key, value in supplied.items():
+                    if key in selected and selected[key] != value:
+                        raise StructureMapError(
+                            "conflicting_mapping", f"Component and selector disagree on {key!r}",
+                            path=self.path, remedy="Remove the conflicting declaration or make both choices agree",
+                        )
+                self.options = UseOverride.model_validate({**selected, **supplied})
+                validate_override(self.path, self.options)
+            self.operation, self.children = operation, dict(children)
+
+        def value(self, *, codec: EncodingCodec | DecodingCodec | None = None,
+                  options: UseOverride | None = None) -> None:
+            self.select("value", Scalar, {}, options)
+            self.codec = codec
+
+        def record(self, children: Mapping[str, MappingNode], *, options: UseOverride | None = None) -> None:
+            self.select("record", RecordRef, children, options)
+
+        def sequence(self, item: MappingNode | None = None, *, options: UseOverride | None = None) -> None:
+            self.select("sequence", Sequence, {"item": item} if item is not None else {}, options)
+
+        def map(self, *, key: MappingNode | None = None, value: MappingNode | None = None,
+                options: UseOverride | None = None) -> None:
+            children = {}
+            if key is not None:
+                children["key"] = key
+            if value is not None:
+                children["value"] = value
+            self.select("map", Map, children, options)
+
+        def positional(self, items: Mapping[int, MappingNode], *, options: UseOverride | None = None) -> None:
+            self.select("positional", Positional, {str(index): node for index, node in items.items()}, options)
+
+        def alternatives(self, branches: Mapping[str, MappingNode], *, options: UseOverride | None = None) -> None:
+            self.select("alternatives", Alternatives, branches, options)
+
+    def configure(shape: Shape, path: str, table: str, node: MappingNode | None) -> Context:
+        context = Context(shape, path, table)
+        context.apply(node or MappingUse(component=default_component(shape).identity))
+        seen: set[str] = set()
+        while context.pending:
+            current = context.pending.pop()
+            identity = current.model_dump_json()
+            if identity in seen:
+                raise StructureMapError("mapping_cycle", "Mapping aliases make no structural progress",
+                                        path=path, remedy="Compose children through a structural operation")
+            seen.add(identity)
+            if isinstance(current, MappingRef):
+                target_node = mapping.definitions.get(current.ref)
+                if target_node is None:
+                    raise StructureMapError("missing_mapping", f"Unknown mapping {current.ref!r}", path=path,
+                                            remedy="Declare the referenced mapping in definitions")
+                context.apply(target_node.model_copy(update={
+                    "config": {**target_node.config, **current.config},
+                    "children": {**target_node.children, **current.children},
+                }))
+                continue
+            implementation = implementations.get(current.component)
+            if implementation is None:
+                raise StructureMapError("missing_component", f"Missing component {current.component!r}", path=path,
+                                        remedy="Supply its implementation explicitly through components")
+            if not directions <= implementation.directions:
+                raise StructureMapError("unavailable_direction", f"Component {current.component!r} lacks requested directions",
+                                        path=path, remedy="Prepare only supported directions or supply a capable component")
+            implementation.prepare(current, context)
+        if context.operation is None:
+            raise StructureMapError("invalid_component", "Component contributed no structural operation",
+                                    path=path, remedy="Use a context composition operation")
+        return context
+
     naming = mapping.defaults.naming
     key_col = naming.metadata_namespace + "key"
     parent_col = naming.metadata_namespace + "parent"
@@ -665,7 +841,15 @@ def prepare(
         nullable: bool = False,
         role_suffix: str = "",
         destination: int | None = None,
+        node: MappingNode | None = None,
+        contribution: Context | None = None,
     ) -> int:
+        contribution = contribution or configure(
+            Nullable(value=RecordRef(definition=definition)) if nullable else RecordRef(definition=definition),
+            authored_path, owner, node,
+        )
+        if contribution.options.prefix is not None:
+            prefix = contribution.options.prefix
         if definition not in record_adapters:
             record_adapters[definition] = native_binding.prepare_record(
                 model.native_types[definition], model.structure.definitions[definition], path=authored_path
@@ -693,6 +877,7 @@ def prepare(
                     namespace=record_namespace,
                     role_suffix=role_suffix,
                     field_context=(model.native_types[definition], member.name, record_namespace),
+                    node=contribution.children.get(member.name),
                 ),
             )
             for member in members
@@ -722,8 +907,11 @@ def prepare(
         namespace: str | None = None,
         format: str | None = None,
         field_context: tuple[type, str, str | None] | None = None,
+        node: MappingNode | None = None,
+        options: UseOverride | None = None,
+        key_node: MappingNode | None = None,
     ) -> str:
-        override = mapping.overrides.get(authored_path)
+        override = options or mapping.overrides.get(authored_path)
         # Context contains only suffixes of finite authored selectors and their
         # declaration identities. Runtime depth is never an interning key.
         context = tuple(
@@ -731,7 +919,8 @@ def prepare(
             for selector in layout_overrides
             if selector == authored_path or selector.startswith(authored_path + "/")
         )
-        role = (family, source_definition, relative_path, kind, role_suffix, anonymous_parent, context)
+        role = (family, source_definition, relative_path, kind, role_suffix, anonymous_parent, context,
+                node.model_dump_json() if node is not None else None)
         if role in roles:
             table = roles[role]
             cast(set[str], tables[table]["parents"]).add(owner)
@@ -778,6 +967,7 @@ def prepare(
             "position_group": position_group,
             "discriminator_column": discriminator_column,
             "discriminator_value": discriminator_value,
+            "key_node": key_node,
         }
 
         def compile_payload() -> None:
@@ -788,7 +978,7 @@ def prepare(
             if isinstance(branch_shape, RecordRef):
                 next_family = (
                     family
-                    if recursive_component[source_definition] == recursive_component[branch_shape.definition]
+                    if recursive_component.get(source_definition) == recursive_component[branch_shape.definition]
                     else path
                 )
                 prefix = (
@@ -807,6 +997,7 @@ def prepare(
                     owner=table,
                     namespace=namespace,
                     destination=payload_id,
+                    node=node,
                 )
             else:
                 nested = isinstance(branch_shape, (Sequence, Map))
@@ -830,6 +1021,7 @@ def prepare(
                     override_applied=discriminator_column is not None,
                     destination=payload_id,
                     field_context=field_context,
+                    node=node,
                 )
 
         pending.append(compile_payload)
@@ -854,15 +1046,18 @@ def prepare(
         override_applied: bool = False,
         destination: int | None = None,
         field_context: tuple[type, str, str | None] | None = None,
+        node: MappingNode | None = None,
+        contribution: Context | None = None,
     ) -> int:
         nullable = isinstance(shape, Nullable)
         value_shape = shape.value if isinstance(shape, Nullable) else shape
-        override = None if override_applied else mapping.overrides.get(authored_path)
+        contribution = contribution or configure(shape, authored_path, owner, node)
+        override = None if override_applied else contribution.options
         if isinstance(value_shape, Scalar):
             _validate_facets(value_shape.facets, authored_path)
             scalar_column = override.column if override is not None and override.column is not None else column
             native_type = model.native_types.get(value_shape.native_type) if value_shape.native_type else None
-            scalar_override = mapping.overrides.get(authored_path)
+            scalar_override = contribution.options
             policy = (
                 scalar_override.value_space
                 if scalar_override is not None and scalar_override.value_space is not None
@@ -880,7 +1075,7 @@ def prepare(
                         owner="mapping restriction", path=authored_path,
                         remedy="Use open_content='fragment' at this path or remove the open-content field",
                     )
-            codec = native_binding.prepare_scalar(
+            codec = contribution.codec or native_binding.prepare_scalar(
                 value_shape,
                 native_type=native_type,
                 format=value_shape.format if value_shape.format is not None else format,
@@ -890,9 +1085,13 @@ def prepare(
                 path=authored_path,
                 field_context=field_context,
             )
+            for direction, methods in (("decompose", ("encode",)), ("reconstruct", ("check", "decode"))):
+                if direction in directions and any(not callable(getattr(codec, method, None)) for method in methods):
+                    raise StructureMapError("unavailable_direction", f"Codec lacks {direction} operations",
+                                            path=authored_path, remedy="Supply the requested codec operations or prepare one direction")
             return emit(ScalarProgram(authored_path, codec, nullable), destination)
         if isinstance(value_shape, RecordRef):
-            if recursive_component[source_definition] == recursive_component[value_shape.definition]:
+            if recursive_component.get(source_definition) == recursive_component[value_shape.definition]:
                 table = row_table(
                     value_shape,
                     path,
@@ -907,6 +1106,7 @@ def prepare(
                     ignore_table_override=ignore_table_override,
                     prefix_override=branch_prefix,
                     namespace=namespace,
+                    node=node, options=override,
                 )
                 return emit(LinkProgram(authored_path, table, nullable), destination)
             prefix = (
@@ -927,6 +1127,7 @@ def prepare(
                 nullable=nullable,
                 role_suffix=role_suffix,
                 destination=destination,
+                contribution=contribution,
             )
         if isinstance(value_shape, Alternatives):
             return compile_variant(
@@ -948,6 +1149,7 @@ def prepare(
                 inherited_prefix=branch_prefix,
                 destination=destination,
                 field_context=field_context,
+                contribution=contribution,
             )
         if isinstance(value_shape, (Sequence, Map)):
             if isinstance(value_shape, Map):
@@ -992,6 +1194,9 @@ def prepare(
                         override_applied=override_applied,
                         field_context=field_context,
                         destination=destination,
+                        key_node=contribution.children.get("key"),
+                        contribution=configure(inner, authored_path, owner, contribution.children.get(
+                            "value" if isinstance(value_shape, Map) else "item")),
                     )
             table = row_table(
                 inner if marked else member,
@@ -1010,6 +1215,9 @@ def prepare(
                 namespace=namespace,
                 format=format,
                 field_context=field_context,
+                node=contribution.children.get("value" if isinstance(value_shape, Map) else "item"),
+                options=override,
+                key_node=contribution.children.get("key"),
             )
             edge: ValueProgram = (
                 MapProgram(authored_path, table, nullable)
@@ -1032,6 +1240,7 @@ def prepare(
                     namespace=namespace,
                     role_suffix=role_suffix,
                     field_context=field_context,
+                    node=contribution.children.get(str(index)),
                 )
                 for index, item in enumerate(value_shape.items)
             )
@@ -1065,8 +1274,11 @@ def prepare(
         inherited_prefix: str | None = None,
         destination: int | None,
         field_context: tuple[type, str, str | None] | None = None,
+        contribution: Context | None = None,
+        key_node: MappingNode | None = None,
     ) -> int:
-        override = None if override_applied else mapping.overrides.get(authored_path)
+        contribution = contribution or configure(alternatives, authored_path, owner, None)
+        override = None if override_applied else contribution.options
         layout = (
             override.variant_layout
             if override is not None and override.variant_layout is not None
@@ -1233,6 +1445,8 @@ def prepare(
                     namespace=namespace,
                     format=branch_format,
                     field_context=field_context,
+                    node=contribution.children.get(key), options=override,
+                    key_node=key_node,
                 )
                 branch_program = cast(int, tables[table]["program"])
                 branches.append(VariantBranch(key, tags[key], branch_program, table, branch_nullable))
@@ -1258,6 +1472,7 @@ def prepare(
                     ignore_table_override=True,
                     override_applied=True,
                     field_context=field_context,
+                    node=contribution.children.get(key),
                 )
                 branches.append(VariantBranch(key, tags[key], branch_program, nullable_payload=branch_nullable))
         null_table: str | None = None
@@ -1283,6 +1498,7 @@ def prepare(
                 discriminator_value=None,
                 position_group=f"{family}:{source_definition}:{relative_path}:{authored_path}:{role_suffix}",
                 namespace=namespace,
+                key_node=key_node,
             )
         return emit(
             VariantProgram(
@@ -1302,7 +1518,8 @@ def prepare(
             destination,
         )
 
-    root_override = mapping.overrides.get("")
+    root_contribution = configure(root_shape, "", "root", mapping.use)
+    root_override = root_contribution.options
     root_name = root_override.table if root_override and root_override.table is not None else "root"
     root_prefix = root_override.prefix if root_override and root_override.prefix is not None else ""
     root_id = reserve()
@@ -1317,88 +1534,188 @@ def prepare(
         "discriminator_value": None,
         "payload_null_column": None,
     }
-    record_program(model.structure.root, "", "", root_prefix, family="", owner=root_name, destination=root_id)
+    if isinstance(root_shape, RecordRef):
+        record_program(root_shape.definition, "", "", root_prefix, family="", owner=root_name,
+                       destination=root_id, contribution=root_contribution)
+    else:
+        compile_shape(
+            root_shape, "", "", root_prefix or "value",
+            family="", owner=root_name, source_definition="", relative_path="",
+            anonymous_parent=root_name, ignore_table_override=True, destination=root_id,
+            contribution=root_contribution,
+        )
     # Discover sibling row roles before descending: recursive children must not
     # lend their traversal depth to an ordinary sibling's default table name.
     while pending:
         pending.popleft()()
+    extra_layouts = set(mapping.layouts) - set(tables)
+    if extra_layouts or relational_schemas is not None and set(relational_schemas) != set(tables):
+        raise StructureMapError(
+            "table_set_mismatch", f"Unmapped layouts {sorted(extra_layouts)!r}; mapped tables {sorted(tables)!r}; supplied schemas {sorted(relational_schemas) if relational_schemas is not None else None!r}",
+            remedy="Declare schemas for exactly the mapped tables and layouts only for those tables",
+        )
+    layouts: dict[str, RowLayout] = {}
+    table_fields: dict[str, dict[str, FieldSpec]] = {}
+    for name, descriptor in tables.items():
+        parents = cast(set[str], descriptor["parents"]) - {""}
+        kind = descriptor["kind"]
+        layout = mapping.layouts.get(name) or RowLayout(
+            key=(key_col,), generated=True, parent=(parent_col,) if parents else (),
+            position=position_col if kind in ("sequence", "map") else None,
+            map_key=map_key_col if kind == "map" else None,
+            null_column=null_col if descriptor["nullable_member"] else None,
+            parent_table=parent_table_col if len(parents) > 1 else None,
+        )
+        if (bool(parents) != bool(layout.parent)
+                or kind in ("sequence", "map") and layout.position is None
+                or kind == "map" and layout.map_key is None
+                or descriptor["nullable_member"] and layout.null_column is None
+                or len(parents) > 1 and layout.parent_table is None):
+            raise StructureMapError("invalid_layout", f"Layout for {name!r} omits required relationship metadata",
+                                    path=cast(str, descriptor["path"]), table=name,
+                                    remedy="Declare parent, position, map_key, null_column or parent_table for this structural use")
+        if layout.role_column is not None:
+            raise StructureMapError("unavailable_capability", "Shared collection role layouts are not yet available",
+                                    table=name, remedy="Use separate collection tables without role_column")
+        layouts[name] = layout
+        fields: dict[str, FieldSpec] = {}
+        origins: dict[str, str] = {}
+        for column, source_path in _program_scalar_paths(cast(int, descriptor["program"]), programs):
+            if column in origins:
+                raise StructureMapError(
+                    "column_collision", f"Column {column!r} maps both {origins[column]!r} and {source_path!r}",
+                    table=name, path=source_path, remedy="Use distinct explicit columns or prefixes",
+                )
+            origins[column] = source_path
+        for field in _program_fields(cast(int, descriptor["program"]), programs):
+            fields[field.name] = field
+        table_fields[name] = fields
+
+    def same_type(left: FieldSpec, right: FieldSpec) -> bool:
+        return (left.type, left.dtype, left.format, left.backend_type) == (
+            right.type, right.dtype, right.format, right.backend_type)
+
+    def add_field(name: str, field: FieldSpec, *, overlap: bool = False) -> None:
+        previous = table_fields[name].get(field.name)
+        if previous is not None:
+            if not overlap:
+                raise StructureMapError("column_collision", f"Metadata and payload both use {field.name!r}",
+                                        table=name, path=next(
+                                            (source for column, source in _program_scalar_paths(
+                                                cast(int, tables[name]["program"]), programs)
+                                             if column == field.name),
+                                            cast(str, tables[name]["path"]),
+                                        ),
+                                        remedy="Rename the payload column or configure distinct metadata")
+            if not same_type(previous, field):
+                raise StructureMapError("incompatible_schema", f"Incompatible field {name}.{field.name}",
+                                        table=name, column=field.name,
+                                        remedy="Declare matching physical types for the relationship columns")
+        else:
+            table_fields[name][field.name] = field
+
+    for name, layout in layouts.items():
+        if layout.generated:
+            if len(layout.key) != 1:
+                raise StructureMapError("invalid_layout", "Generated keys require one column", table=name,
+                                        remedy="Declare one generated key column or use a source composite key")
+            add_field(name, FieldSpec(name=layout.key[0], type=UniversalType.STRING, missing_values=[]))
+        for metadata_column, datatype in (
+            (layout.position, UniversalType.INTEGER), (layout.map_key, UniversalType.STRING),
+            (layout.null_column, UniversalType.BOOLEAN), (layout.parent_table, UniversalType.STRING),
+            (cast(str | None, tables[name]["discriminator_column"]), UniversalType.STRING),
+            (cast(str | None, tables[name]["payload_null_column"]), UniversalType.BOOLEAN),
+        ):
+            if metadata_column is not None:
+                add_field(name, FieldSpec(name=metadata_column, type=datatype, missing_values=[]),
+                          overlap=name in mapping.layouts and metadata_column == layout.position)
+        for key in layout.key:
+            if key not in table_fields[name] and key not in layout.parent:
+                raise StructureMapError("invalid_layout", f"Source key {name}.{key} has no value source",
+                                        table=name, column=key,
+                                        remedy="Select a mapped source field, parent column or position as the key")
+
+    unresolved = {name for name, layout in layouts.items() if layout.parent}
+    while unresolved:
+        progressed = False
+        for name in tuple(unresolved):
+            layout = layouts[name]
+            parent_names = sorted(cast(set[str], tables[name]["parents"]) - {""})
+            if any(any(key not in table_fields[parent] for key in layouts[parent].key) for parent in parent_names):
+                continue
+            for parent in parent_names:
+                if len(layout.parent) != len(layouts[parent].key):
+                    raise StructureMapError("invalid_layout", f"Parent key arity differs for {name!r}", table=name,
+                                            remedy="Declare one parent column for each parent key column")
+                for column, key in zip(layout.parent, layouts[parent].key, strict=True):
+                    field = deepcopy(table_fields[parent][key])
+                    field.name = column
+                    add_field(name, field, overlap=True)
+            unresolved.remove(name)
+            progressed = True
+        if not progressed:
+            raise StructureMapError("invalid_layout", f"Cyclic unresolved source keys in {sorted(unresolved)!r}",
+                                    remedy="Use mapped source key fields or generated keys rather than cyclic key dependencies")
+
     plans: dict[str, TablePlan] = {}
     for name, descriptor in tables.items():
-        program_id = cast(int, descriptor["program"])
-        kind = cast(str, descriptor["kind"])
-        parents = tuple(sorted(cast(set[str], descriptor["parents"])))
-        fields = [FieldSpec(name=key_col, type=UniversalType.STRING, missing_values=[])]
-        if parents != ("",):
-            fields.append(FieldSpec(name=parent_col, type=UniversalType.STRING, missing_values=[]))
-            if kind in ("sequence", "map"):
-                fields.append(FieldSpec(name=position_col, type=UniversalType.INTEGER, missing_values=[]))
-            if kind == "map":
-                fields.append(FieldSpec(name=map_key_col, type=UniversalType.STRING, missing_values=[]))
-            if len(parents) > 1:
-                fields.append(FieldSpec(name=parent_table_col, type=UniversalType.STRING, missing_values=[]))
-        if cast(bool, descriptor["nullable_member"]):
-            fields.append(FieldSpec(name=null_col, type=UniversalType.BOOLEAN, missing_values=[]))
-        discriminator_column = cast(str | None, descriptor["discriminator_column"])
-        if discriminator_column is not None:
-            fields.append(FieldSpec(name=discriminator_column, type=UniversalType.STRING, missing_values=[]))
-        payload_null_column = cast(str | None, descriptor["payload_null_column"])
-        if payload_null_column is not None:
-            fields.append(FieldSpec(name=payload_null_column, type=UniversalType.BOOLEAN, missing_values=[]))
-        fields.extend(_program_fields(program_id, programs))
-        columns = tuple(field.name for field in fields)
-        if len(set(columns)) != len(columns):
-            scalar_sources = _program_scalar_paths(program_id, programs)
-            seen: dict[str, str] = {}
-            conflicts: list[tuple[str, str, str]] = []
-            for column, source_path in scalar_sources:
-                if column in seen:
-                    conflicts.append((column, seen[column], source_path))
-                else:
-                    seen[column] = source_path
-            if not conflicts:
-                metadata_columns = (
-                    {field.name for field in fields[: -len(scalar_sources)]}
-                    if scalar_sources
-                    else {field.name for field in fields}
-                )
-                conflicts = [
-                    (column, f"metadata:{column}", source_path)
-                    for column, source_path in scalar_sources
-                    if column in metadata_columns
-                ]
-            column, first_path, second_path = conflicts[0]
-            raise StructureMapError(
-                "column_collision",
-                f"Column {column!r} in table {name!r} maps both {first_path!r} and {second_path!r}",
-                path=second_path,
-                table=name,
-                remedy="Change column_naming or metadata_namespace, or use distinct explicit names",
+        layout = layouts[name]
+        fields = table_fields[name]
+        if relational_schemas is not None:
+            schema = relational_schemas[name]
+            supplied = {field.name: field for field in schema.fields}
+            if len(supplied) != len(schema.fields) or set(supplied) != set(fields):
+                raise StructureMapError("incompatible_schema", f"Table {name!r}: missing columns {sorted(set(fields) - set(supplied))!r}; extra columns {sorted(set(supplied) - set(fields))!r}; duplicate names {len(supplied) != len(schema.fields)}",
+                                        table=name, remedy="Declare exactly the mapped payload and relationship columns")
+            for column, field in fields.items():
+                if not same_type(field, supplied[column]):
+                    raise StructureMapError("incompatible_schema", f"Physical type mismatch for {name}.{column}",
+                                            table=name, column=column,
+                                            remedy="Use a compatible declared physical type or an explicit mapping codec")
+        else:
+            # Preserve the established generated layout's column order.
+            metadata = [*layout.key, *layout.parent, layout.position, layout.map_key,
+                        layout.parent_table, layout.null_column, descriptor["discriminator_column"],
+                        descriptor["payload_null_column"]]
+            ordered = dict.fromkeys(column for column in metadata if isinstance(column, str))
+            ordered.update(dict.fromkeys(fields))
+            schema = TypeSpec(fields=[fields[column] for column in ordered], missing_values=[])
+        map_codec: EncodingCodec | DecodingCodec | None = None
+        if descriptor["kind"] == "map":
+            key_shape = Scalar(type="str")
+            key_context = configure(key_shape, cast(str, descriptor["path"]), name,
+                                    cast(MappingNode | None, descriptor.get("key_node")))
+            map_codec = key_context.codec or native_binding.prepare_scalar(
+                key_shape, native_type=str, format=None, column=cast(str, layout.map_key),
+                policy=None, path=cast(str, descriptor["path"]),
             )
+            if (len(map_codec.fields) != 1 or map_codec.fields[0].name != layout.map_key
+                    or map_codec.fields[0].type != UniversalType.STRING):
+                raise StructureMapError("incompatible_schema", "Map key codecs require one declared STRING field",
+                                        table=name, remedy="Use the layout map_key column with a STRING codec")
+            for direction, methods in (("decompose", ("encode",)), ("reconstruct", ("check", "decode"))):
+                if direction in directions and any(not callable(getattr(map_codec, method, None)) for method in methods):
+                    raise StructureMapError("unavailable_direction", f"Map key codec lacks {direction}",
+                                            table=name, remedy="Supply requested map key operations or prepare one direction")
         plans[name] = TablePlan(
-            name=name,
-            source_path=cast(str, descriptor["path"]),
-            parent_tables=tuple(parent for parent in parents if parent),
-            columns=columns,
-            _typespec=TypeSpec(fields=fields, missing_values=[]),
-            _program=program_id,
-            _kind=cast(Literal["root", "single", "sequence", "map"], kind),
+            name=name, source_path=cast(str, descriptor["path"]),
+            parent_tables=tuple(sorted(cast(set[str], descriptor["parents"]) - {""})),
+            columns=tuple(field.name for field in schema.fields), _typespec=deepcopy(schema), layout=layout,
+            _program=cast(int, descriptor["program"]),
+            _kind=cast(Literal["root", "single", "sequence", "map"], descriptor["kind"]),
             _nullable_member=cast(bool, descriptor["nullable_member"]),
             _position_group=cast(str | None, descriptor["position_group"]),
+            map_key_codec=map_codec,
         )
     return PreparedMapping(
         root=root_id,
         programs=programs,
         root_table=root_name,
-        root_type=cast(type[T], model.native_types[model.structure.root]),
+        root_type=cast(type[T], root_native),
         tables=plans,
         native_types=model.native_types,
         binding=native_binding,
         record_adapters=record_adapters,
         capabilities=native_binding.capabilities,
-        key_column=key_col,
-        parent_column=parent_col,
-        position_column=position_col,
-        map_key_column=map_key_col,
-        null_column=null_col,
-        parent_table_column=parent_table_col,
+        directions=directions,
     )

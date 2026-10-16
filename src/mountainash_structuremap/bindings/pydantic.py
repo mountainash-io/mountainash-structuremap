@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from mountainash_structuremap.bindings.contracts import CapabilityReport, RecordAdapter, VariantAdapter
 from mountainash_structuremap.bindings.dataclass import DataclassBinding, describe_annotation
 from mountainash_structuremap.bindings.selection import _has_xml_metadata
-from mountainash_structuremap.codecs import PrimitiveCodec
-from mountainash_structuremap.definitions import Alternative, Member, RecordDefinition, Scalar
+from mountainash_structuremap.codecs import ScalarCodec
+from mountainash_structuremap.definitions import Alternative, Member, RecordDefinition, RecordRef, Scalar, Shape
 from mountainash_structuremap.errors import StructureMapError
 
 
@@ -20,6 +20,12 @@ class PydanticBinding:
 
     def __init__(self) -> None:
         self._dataclass = DataclassBinding()
+
+    def describe_root(self, annotation: object, register: Callable[[type, str], str], *, path: str) -> Shape:
+        if not isinstance(annotation, type) or not issubclass(annotation, BaseModel):
+            raise StructureMapError("unsupported_root", "Pydantic requires a BaseModel record root",
+                                    path=path, owner="binding gap", remedy="Use an ordinary BaseModel root")
+        return RecordRef(definition=register(annotation, path))
 
     def _check_model(self, cls: type[BaseModel], path: str) -> None:
         if getattr(cls, "__pydantic_root_model__", False):
@@ -85,7 +91,7 @@ class PydanticBinding:
         self, declaration: Scalar, *, native_type: type | None, format: str | None,
         column: str, policy: str | None, metadata_namespace: str = "_sm_", path: str,
         field_context: tuple[type, str, str | None] | None = None,
-    ) -> PrimitiveCodec:
+    ) -> ScalarCodec:
         return self._dataclass.prepare_scalar(
             declaration, native_type=native_type, format=format, column=column,
             policy=policy, metadata_namespace=metadata_namespace, path=path, field_context=field_context,

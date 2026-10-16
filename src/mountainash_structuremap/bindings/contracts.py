@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol, TypeVar, runtime_checkable
 
 from mountainash_structuremap.codecs import ScalarCodec as _ScalarCodec
-from mountainash_structuremap.definitions import Alternative, RecordDefinition, Scalar
+from mountainash_structuremap.definitions import Alternative, RecordDefinition, Scalar, Shape
 
 T = TypeVar("T")
 
@@ -39,6 +39,10 @@ class VariantAdapter(Protocol):
 class NativeBinding(Protocol):
     name: str
     capabilities: CapabilityReport
+
+    def describe_root(
+        self, annotation: object, register: Callable[[type, str], str], *, path: str
+    ) -> Shape: ...
 
     def describe_record(
         self, cls: type, register: Callable[[type, str], str], *, path: str

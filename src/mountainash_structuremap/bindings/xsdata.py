@@ -64,6 +64,12 @@ class XsdataBinding(NativeBinding, DocumentBinding):
     name = "xsdata"
     capabilities = CapabilityReport(Parse=True, Serialize=True)
 
+    def describe_root(self, annotation: object, register: Callable[[type, str], str], *, path: str) -> Shape:
+        if not isinstance(annotation, type) or not is_dataclass(annotation):
+            raise StructureMapError("unsupported_root", "xsdata requires a dataclass record root",
+                                    path=path, owner="binding gap", remedy="Use an xsdata dataclass root")
+        return RecordRef(definition=register(annotation, path))
+
     def __init__(self) -> None:
         self._native_types: dict[str, type] = {}
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Mapping
+from typing import Callable, Collection, Mapping
 
 from mountainash_structuremap.definitions import Nullable, RecordRef, StructureSpec
 from mountainash_structuremap.errors import StructureMapError
@@ -16,6 +16,13 @@ class DefinitionSelector:
     override: UseOverride
 
 
+def definition_candidates(name: str, names: Collection[str]) -> tuple[str, ...]:
+    """Share exact/unique-short-name semantics across assembly and selectors."""
+    if name in names:
+        return (name,)
+    return tuple(candidate for candidate in names if candidate.rsplit(".", 1)[-1] == name)
+
+
 def resolve_selectors(structure: StructureSpec, mapping: MappingSpec) -> tuple[DefinitionSelector, ...]:
     names = tuple(structure.definitions)
     selectors: list[DefinitionSelector] = []
@@ -23,9 +30,7 @@ def resolve_selectors(structure: StructureSpec, mapping: MappingSpec) -> tuple[D
         if not raw.startswith("@"):
             continue
         selector, _, suffix = raw[1:].partition("/")
-        candidates = [name for name in names if name == selector]
-        if not candidates:
-            candidates = [name for name in names if name.rsplit(".", 1)[-1] == selector]
+        candidates = definition_candidates(selector, names)
         if not candidates:
             raise StructureMapError(
                 "unknown_selector", f"Unknown definition selector {raw!r}", path=raw,

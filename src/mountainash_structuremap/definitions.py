@@ -87,7 +87,8 @@ class Alternatives(Declaration):
 
 
 Shape = Annotated[
-    Scalar | RecordRef | Sequence | Map | Positional | Nullable | Alternatives, Field(discriminator="kind")
+    Scalar | RecordRef | Sequence | Map | Positional | Nullable | Alternatives,
+    Field(discriminator="kind", json_schema_extra={"required": ["kind"]}),
 ]
 
 

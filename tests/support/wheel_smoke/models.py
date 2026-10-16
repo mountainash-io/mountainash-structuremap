@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,9 +28,7 @@ NS = "urn:structuremap:catalog"
 
 @dataclass(kw_only=True)
 class Entry:
-    amount: Decimal = field(metadata={
-        "type": "Element", "namespace": NS, "total_digits": 20, "fraction_digits": 3,
-    })
+    amount: Decimal = field(metadata={"type": "Element", "namespace": NS, "total_digits": 20, "fraction_digits": 3})
     serial: int = field(metadata={"type": "Element", "namespace": NS})
     day: XmlDate = field(metadata={"type": "Element", "namespace": NS})
     clock: XmlTime = field(metadata={"type": "Element", "namespace": NS})
@@ -40,9 +39,7 @@ class Entry:
 
 @dataclass(kw_only=True)
 class Note:
-    content: list[object] = field(default_factory=list, metadata={
-        "type": "Wildcard", "namespace": "##any", "mixed": True,
-    })
+    content: list[object] = field(default_factory=list, metadata={"type": "Wildcard", "namespace": "##any", "mixed": True})
 
 
 @dataclass(kw_only=True)
@@ -53,10 +50,7 @@ class Catalog:
 
     entry_or_note: list[Entry | Note] = field(default_factory=list, metadata={
         "type": "Elements",
-        "choices": (
-            {"name": "entry", "type": Entry},
-            {"name": "note", "type": Note},
-        ),
+        "choices": ({"name": "entry", "type": Entry}, {"name": "note", "type": Note}),
     })
 
 
@@ -75,8 +69,32 @@ CATALOG_XML = f'''<catalog xmlns="{NS}" xmlns:q="urn:external">
     <when>2024-02-03T04:05:06Z</when></entry>
 </catalog>'''
 
+
 def load_xml_types() -> None:
-    # Keep the base-only fixture importable without the optional XML extra.
     from xsdata.models.datatype import XmlDate, XmlDateTime, XmlTime
 
     globals().update(XmlDate=XmlDate, XmlDateTime=XmlDateTime, XmlTime=XmlTime)
+
+
+@dataclass(frozen=True)
+class AuthoringItem:
+    country: Literal["AU", "NZ"]
+    amount: Decimal
+    effective: date | None
+
+
+@dataclass(frozen=True)
+class AuthoringLedger:
+    items: tuple[AuthoringItem, ...]
+
+
+@dataclass(frozen=True)
+class AuthoringAddress:
+    city: str
+    country: str
+
+
+@dataclass(frozen=True)
+class AuthoringDirectory:
+    home: list[AuthoringAddress]
+    work: list[AuthoringAddress]

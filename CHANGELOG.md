@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add canonical JSON/safe-YAML mapping and structure authoring, generated JSON Schemas, namespace assembly and a thin snapshotting fluent builder.
+- Retain explicit-null override semantics and Mountainash Frictionless relation descriptors in portable bundles; reject duplicate keys, executable YAML tags, non-JSON values and unknown envelope fields without importing native bindings.
+- Exercise portable authoring through independently declared schemas and shared-role rows in the composable mapping example.
+- Preserve populated declaration dictionaries and explicit-null selector resets across export; enforce document scalar types and required structural discriminators in the generated schema.
+- Extend isolated XML/base/current/minimum-Pydantic wheel qualification with retained mapping JSON, independent schemas and rows, external multi-column codecs, typed tuples and shared collection roles.
 - Resolve finite reusable mapping references and qualified definition selectors, including nested suffixes and recursive path-local policies; reject alias and component-delegation cycles.
 - Add ancestor-backed source keys, shared collection roles and explicit strict/lenient/unordered policies, with role-aware typed identities and preconstruction relationship validation.
 - Add batched Mountainash type casts and inverse projections, post-cast key collision checks, Shared/Exact alternatives and retained finite source-discriminator domains.

@@ -8,20 +8,27 @@ from mountainash.typespec.spec import FieldSpec, TypeSpec
 from mountainash.typespec.universal_types import UniversalType as U
 
 from mountainash_structuremap import (
+    AuthoringBundle,
+    MappingBuilder,
     MappingRef,
     MappingSpec,
     MappingUse,
     RowLayout,
     StructureMapError,
     UseOverride,
+    assemble_structure,
     decompose,
     derive,
+    dump_bundle,
+    load_bundle,
+    load_mapping,
+    load_structure,
     prepare,
     reconstruct,
 )
 from mountainash_structuremap.codecs import CellLocation
 from mountainash_structuremap.components import PreparationContext
-from mountainash_structuremap.definitions import Nullable, RecordRef, Scalar
+from mountainash_structuremap.definitions import DerivedModel, Nullable, RecordRef, Scalar
 from mountainash_structuremap.mapping import SharedCollection, TypeCast
 
 
@@ -222,6 +229,92 @@ def checkpoint_b():
     print("Branch-specific native inverse:", restored)
 
 
+def portable_authoring():
+    document = load_structure("""
+    namespace: addressbook
+    structure:
+      root: Directory
+      definitions:
+        Directory:
+          name: Directory
+          members:
+            - name: home
+              shape: {kind: sequence, item: {kind: record, definition: Address}}
+            - name: work
+              shape: {kind: sequence, item: {kind: record, definition: Address}}
+        Address:
+          name: Address
+          members:
+            - {name: city, shape: {kind: scalar, type: str}}
+            - {name: country, shape: {kind: scalar, type: str}}
+    """, format="yaml")
+    model = DerivedModel(
+        structure=assemble_structure([document], root="addressbook.Directory"),
+        native_types={"addressbook.Directory": Directory, "addressbook.Address": Address},
+        binding="dataclass",
+    )
+    json_mapping = """{
+      "overrides": {
+        "home": {"key": {"strategy": "source", "columns": ["city"]},
+                 "collection_table": {"strategy": "shared", "table": "addresses",
+                                      "role_column": "address_role", "role": "home"}},
+        "work": {"key": {"strategy": "source", "columns": ["city"]},
+                 "collection_table": {"strategy": "shared", "table": "addresses",
+                                      "role_column": "address_role", "role": "work"}}
+      }
+    }"""
+    yaml_mapping = """
+    overrides:
+      home:
+        key: {strategy: source, columns: [city]}
+        collection_table: {strategy: shared, table: addresses, role_column: address_role, role: home}
+      work:
+        key: {strategy: source, columns: [city]}
+        collection_table: {strategy: shared, table: addresses, role_column: address_role, role: work}
+    """
+    builder = MappingBuilder()
+    for role in ("home", "work"):
+        builder.override(
+            role, key={"strategy": "source", "columns": ["city"]},
+            collection_table={"strategy": "shared", "table": "addresses",
+                              "role_column": "address_role", "role": role},
+        )
+    schemas = {
+        "root": TypeSpec(fields=[FieldSpec(name="_sm_key", type=U.STRING, missing_values=[])], missing_values=[]),
+        "addresses": TypeSpec(fields=[
+            FieldSpec(name=name, type=kind, missing_values=[]) for name, kind in (
+                ("city", U.STRING), ("_sm_parent", U.STRING), ("_sm_position", U.INTEGER),
+                ("address_role", U.STRING), ("country", U.STRING),
+            )
+        ], missing_values=[]),
+    }
+    rows = {
+        "root": [{"_sm_key": "document"}],
+        "addresses": [
+            {"city": "Kyoto", "_sm_parent": "document", "_sm_position": 9, "address_role": "home", "country": "JP"},
+            {"city": "Oslo", "_sm_parent": "document", "_sm_position": 3, "address_role": "home", "country": "NO"},
+            {"city": "Oslo", "_sm_parent": "document", "_sm_position": 0, "address_role": "work", "country": "NO"},
+        ],
+    }
+    expected = Directory([Address("Oslo", "NO"), Address("Kyoto", "JP")], [Address("Oslo", "NO")])
+    for name, mapping in (
+        ("JSON", load_mapping(json_mapping, format="json")),
+        ("YAML", load_mapping(yaml_mapping, format="yaml")),
+        ("fluent", builder.build()),
+    ):
+        bundle = load_bundle(dump_bundle(
+            AuthoringBundle(structure=document, mapping=mapping, relations=schemas), format="json",
+        ), format="json")
+        plan = prepare(model, bundle.mapping, relations=bundle.relations)
+        restored = reconstruct(rows, plan)
+        assert restored == expected
+        emitted = decompose(restored, plan)
+        assert [row["address_role"] for row in emitted["addresses"]] == ["home", "home", "work"]
+        assert [row["_sm_position"] for row in emitted["addresses"]] == [0, 1, 0]
+        print(f"{name} authoring + retained bundle:", restored)
+
+
 if __name__ == "__main__":
     main()
     checkpoint_b()
+    portable_authoring()

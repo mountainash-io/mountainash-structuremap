@@ -206,7 +206,7 @@ when sharing alternative branches. Roles retain independent keys and position
 domains; equal application IDs never merge occurrences. Configured parent-table
 selectors must agree with the role's permitted parent tables.
 
-`TypeCast(to=..., on_failure="error"|"null")` uses Mountainash's dtype vocabulary
+`TypeCast(to=..., on_failure="throw"|"null")` uses Mountainash's dtype vocabulary
 and projections. Preparation declares post-cast physical schemas without sampling
 data. Execution batches each scalar use's owned columns, then validates finalized
 keys; casting `"01"` and `"1"` to the same source key is an error. Reconstruction
@@ -225,6 +225,81 @@ Execution buffers rows, scalar projection batches and relationship indexes; this
 is not a streaming claim. See `examples/composable_mapping.py` for independent
 schemas/rows, reusable address components, a three-integer date codec, source
 keys, recursive references, shared roles and branch-specific cast reconstruction.
+
+### Portable authoring
+
+JSON, safe YAML and the fluent builder produce the same canonical `MappingSpec`;
+they do not introduce a second preparation or execution engine.
+
+```python
+from mountainash_structuremap import (
+    MappingBuilder, MappingUse, dump_mapping, load_mapping, mapping_schema,
+)
+
+mapping = load_mapping(
+    '{"use":{"component":"core.record"},"overrides":{"city":{"column":"town"}}}',
+    format="json",
+)
+equivalent = (
+    MappingBuilder()
+    .use(MappingUse(component="core.record"))
+    .override("city", column="town")
+    .build()
+)
+yaml_text = dump_mapping(mapping, format="yaml")
+schema = mapping_schema()  # generated JSON Schema, not a separately maintained schema
+```
+
+The envelope is unversioned and uses `root`, `use`, `definitions`, `overrides`,
+`defaults` and `layouts`. A component use has `component`, JSON-shaped `config`
+and an optional `children` mapping keyed by that component's child names. A
+reference uses `ref`, with optional `config` and `children` overlays.
+Explicit null overrides survive dumping and loading: resetting a selector's cast
+with `cast: null` is different from omitting `cast`. Duplicate keys, non-JSON
+values, executable YAML tags and unknown declaration fields fail rather than
+being silently normalized or ignored. Loading accepts unresolved references and
+component names for inspection; `prepare` requires their explicit implementations.
+No loader imports native classes, activates a binding or fetches resources.
+
+`MappingBuilder` mutates fluently through `defaults`, `use`, `define`, `override`
+and `layout`; `build()` returns a detached snapshot. Builder inputs and previously
+built mappings do not share mutable declaration dictionaries.
+
+`StructureDocument(namespace=..., structure=...)`, `load_structure`,
+`dump_structure` and `structure_schema` support standalone structural documents.
+`assemble_structure(documents, root=...)` prefixes definition names with each
+document's namespace unless already so qualified, rewrites finite references and
+rejects duplicate qualified names. An unqualified reference must resolve uniquely
+across all supplied documents; ambiguity reports qualified candidates. Selectors
+use the same exact/unique-short-name rule. Recursive references stay finite.
+To execute an assembled structure, explicitly supply its native associations:
+
+```python
+from mountainash_structuremap import assemble_structure
+from mountainash_structuremap.definitions import DerivedModel
+
+model = DerivedModel(
+    structure=assemble_structure(documents, root="addressbook.Directory"),
+    native_types={
+        "addressbook.Directory": Directory,
+        "addressbook.Address": Address,
+    },
+    binding="dataclass",
+)
+```
+
+`AuthoringBundle(structure=..., mapping=..., relations=...)` packages an optional
+structure document, mapping and table-name-to-`TypeSpec` declarations.
+`dump_bundle`/`load_bundle` accept explicit `format="json"` or `"yaml"`.
+Relations retain Mountainash Frictionless descriptors, including parameterized
+dtypes and missing-value settings; bundles contain no executable native bindings.
+Supply the loaded relations to `prepare(..., relations=bundle.relations)` rather
+than inferring a schema from rows.
+
+The portable-authoring section of `examples/composable_mapping.py` executes JSON,
+YAML and fluent routes over independently declared schemas and shared-role rows,
+then reloads retained bundles before reconstruction. This remains buffered table
+execution, not a filesystem dataset or incremental-processing interface.
 
 ### Alternatives
 
@@ -476,12 +551,12 @@ exceptions remain the chained cause.
 
 ### Not yet executable
 
-The `SourceKey` strategy's ancestor resolution, lenient/unordered collections,
-shared tables, casts, presence preservation and other binding-specific strategies
-are not yet executable. Explicit source/composite `RowLayout` mappings above are
-supported. Preparation refuses unavailable strategies rather than weakening them.
+Presence preservation, EAV alternatives, Widen/Combined shared projections and
+custom cast implementations remain unavailable. Preparation refuses unavailable
+strategies rather than weakening them. Native-binding limits are described above.
 
-YAML/JSON mapping authoring, Parquet output and incremental execution are separate work.
+Arrow/Parquet dataset persistence, atomic filesystem output and incremental
+execution are separate work; portable declarations do not qualify those surfaces.
 
 The former namespace blocker in
 [issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
@@ -533,6 +608,12 @@ tables. Separate isolated writer/reader processes transfer portable declarations
 mapping, TypeSpecs and actual Decimal/date/time/datetime table carriers.
 Assertions distinguish absent offsets from explicit UTC. Base-only execution
 proves dataclass support and actionable detected/explicit missing-XML errors.
+Every environment also loads retained mapping JSON and independently declared
+Frictionless schemas in a fresh reader, explicitly supplies an application-owned
+date component outside the package, and reconstructs independent tuple/Literal/
+Decimal/date and shared-role rows. Duplicate values, gapped positions, empty
+collections and all-null date cells are checked separately from the emitted-row
+transport control.
 All runs use the installed package outside the checkout; only copied application
 fixtures are added to the import path. Temporary environments and transport
 files are removed afterward.

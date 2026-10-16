@@ -7,6 +7,7 @@ features = ["xml"]
 dependencies = [
   "pytest>=8",
   "hatch>=1.14",
+  "jsonschema>=4,<5",
 ]
 
 [envs.test.scripts]
@@ -29,7 +30,7 @@ python = "3.12"
 installer = "uv"
 skip-install = false
 features = ["xml"]
-dependencies = ["mypy"]
+dependencies = ["mypy", "types-PyYAML"]
 
 [envs.mypy.scripts]
 check = "mypy src/mountainash_structuremap"

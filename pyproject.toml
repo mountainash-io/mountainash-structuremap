@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
   "mountainash @ git+https://github.com/mountainash-io/mountainash.git@a9725e69831fc209307ed0c82d524e3dbf43479e",
   "pydantic>=2.11,<3",
+  "PyYAML>=6,<7",
 ]
 
 [project.optional-dependencies]

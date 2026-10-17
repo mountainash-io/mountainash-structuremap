@@ -208,6 +208,9 @@ class DataclassRecordAdapter:
                 owner="native limitation", remedy="Provide a readable dataclass member",
             ) from exc
 
+    def omitted(self, member: str, *, path: str) -> tuple[bool, object]:
+        return omitted_dataclass_member(self.native_type, member, path=path)
+
     def construct(self, values: dict[str, object], *, path: str) -> object:
         try:
             return self.native_type(**values)
@@ -216,6 +219,24 @@ class DataclassRecordAdapter:
                 "native_construct_failed", "Dataclass construction failed", path=path,
                 owner="native limitation", remedy="Ensure supplied values satisfy the native constructor",
             ) from exc
+
+
+def omitted_dataclass_member(
+    native_type: type, member: str, *, path: str,
+) -> tuple[bool, object]:
+    """Resolve an absent envelope member without constructing a partial record."""
+    item = next(item for item in fields(native_type) if item.name == member)
+    if item.default is not MISSING:
+        return True, item.default
+    if item.default_factory is MISSING:
+        return False, None
+    try:
+        return True, item.default_factory()
+    except Exception as exc:
+        raise StructureMapError(
+            "native_default_failed", "Native member default factory failed", path=path,
+            owner="native limitation", remedy="Supply the member or correct its native default factory",
+        ) from exc
 
 
 def record_fields(cls: type, *, path: str) -> tuple[Field[Any], ...]:

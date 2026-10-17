@@ -30,7 +30,7 @@ from xsdata.models.datatype import (
 )
 
 from mountainash_structuremap.bindings.contracts import CapabilityReport, DocumentBinding, NativeBinding, RecordAdapter
-from mountainash_structuremap.bindings.dataclass import record_fields, validate_constructor
+from mountainash_structuremap.bindings.dataclass import omitted_dataclass_member, record_fields, validate_constructor
 from mountainash_structuremap.bindings.xml_fragments import FragmentCodec
 from mountainash_structuremap.bindings.xml_scalars import _integer_text, prepare_xml_scalar
 from mountainash_structuremap.codecs import ScalarCodec
@@ -243,6 +243,9 @@ class XsdataRecordAdapter:
                 "native_read_failed", "Could not read native XML model member", path=path,
                 owner="native limitation", remedy="Provide a readable native model member",
             ) from exc
+
+    def omitted(self, member: str, *, path: str) -> tuple[bool, object]:
+        return omitted_dataclass_member(self.native_type, member, path=path)
 
     def construct(self, values: dict[str, object], *, path: str) -> object:
         try:

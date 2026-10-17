@@ -139,6 +139,18 @@ class PydanticRecordAdapter:
                 owner="native limitation", remedy="Provide a readable mapped member",
             ) from exc
 
+    def omitted(self, member: str, *, path: str) -> tuple[bool, object]:
+        field = self.native_type.model_fields[member]
+        if field.is_required():
+            return False, None
+        try:
+            return True, field.get_default(call_default_factory=True)
+        except Exception as exc:
+            raise StructureMapError(
+                "native_default_failed", "Native member default factory failed", path=path,
+                owner="native limitation", remedy="Supply the member or correct its native default factory",
+            ) from exc
+
     def construct(self, values: dict[str, object], *, path: str) -> object:
         try:
             return self.native_type.model_validate(values, by_name=True, by_alias=False)

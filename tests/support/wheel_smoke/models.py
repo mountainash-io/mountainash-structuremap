@@ -98,3 +98,40 @@ class AuthoringAddress:
 class AuthoringDirectory:
     home: list[AuthoringAddress]
     work: list[AuthoringAddress]
+
+
+@dataclass(frozen=True)
+class ExecutionLine:
+    id: int
+    label: str
+    batch_id: int
+    student_id: int
+
+
+@dataclass(frozen=True)
+class ExecutionStudent:
+    id: int
+    lines: list[ExecutionLine]
+
+
+@dataclass(frozen=True)
+class ExecutionBatch:
+    id: int
+    students: list[ExecutionStudent]
+
+
+@dataclass(frozen=True)
+class Counted:
+    common: str
+    count: int
+
+
+@dataclass(frozen=True)
+class Flagged:
+    common: str
+    flag: bool
+
+
+@dataclass(frozen=True)
+class Alternatives:
+    items: list[Counted | Flagged]

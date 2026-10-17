@@ -9,13 +9,20 @@ description = "Declarative native-model and table transformations"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "mountainash @ git+https://github.com/mountainash-io/mountainash.git@a9725e69831fc209307ed0c82d524e3dbf43479e",
+  "mountainash @ git+https://github.com/mountainash-io/mountainash.git@c1e8da53822af9b61079a34f00c811ce5d53c733",
   "pydantic>=2.11,<3",
   "PyYAML>=6,<7",
+  "pyarrow>=16",
 ]
 
 [project.optional-dependencies]
-xml = ["xsdata==26.2"]
+xml = ["xsdata==26.2", "lxml>=4.9"]
+files = [
+  "mountainash-files @ git+https://github.com/mountainash-io/mountainash-files.git@82a740903dcd262c5f273d99e2e79dc2891938bf",
+  "mountainash-transport @ git+https://github.com/mountainash-io/mountainash-transport.git@038f7517691c7b0e80b6dea5202683061f18259a",
+  "mountainash-auth-client @ git+https://github.com/mountainash-io/mountainash-auth-client.git@1b57247f17deb68c1178635486c05a8bfc6fa83b",
+  "mountainash-settings @ git+https://github.com/mountainash-io/mountainash-settings.git@1bb25f741459c491280d7d9cacf7ebf3a8b66cf3",
+]
 
 
 [tool.hatch.metadata]

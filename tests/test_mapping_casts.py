@@ -3,8 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
+import polars as pl
+import pyarrow as pa
 import pytest
-from mountainash.typespec.universal_types import UniversalType as U
+from mountainash.core.dtypes import MountainashDtype, NativeDtype, TypeTarget
+from mountainash.typespec.converters import to_arrow_schema
+from mountainash.typespec.spec import FieldSpec, TypeSpec
 
 from mountainash_structuremap import (
     MappingSpec,
@@ -21,6 +25,7 @@ from mountainash_structuremap.mapping import (
     SourceKey,
     TypeCast,
 )
+from mountainash_structuremap.projections import prepare_value_projection
 
 
 @dataclass(frozen=True)
@@ -67,9 +72,67 @@ def test_type_cast_projects_string_values_to_integer_and_reconstructs_native_str
     assert [row["id"] for row in rows["items"]] == [1, 2]
     assert type(rows["items"][0]["id"]) is int
     assert reconstruct(rows, prepared) == Items([Item("1", "first"), Item("2", "second")])
-    field = next(field for field in prepared.tables["items"].typespec.fields if field.name == "id")
-    assert field.type is U.INTEGER
-    assert field.backend_type == "i64"
+    table = pa.Table.from_pylist(rows["items"], schema=to_arrow_schema(prepared.tables["items"].typespec))
+    assert table.schema.field("id").type == pa.int64()
+    assert table.column("id").to_pylist() == [1, 2]
+
+
+@pytest.mark.parametrize(("target", "arrow_type", "values"), [
+    ("i8", pa.int8(), ["-128", "127"]),
+    ("i16", pa.int16(), ["-32768", "32767"]),
+    ("i32", pa.int32(), ["-2147483648", "2147483647"]),
+    ("i64", pa.int64(), ["-9223372036854775808", "9223372036854775807"]),
+    ("u8", pa.uint8(), ["0", "255"]),
+    ("u16", pa.uint16(), ["0", "65535"]),
+    ("u32", pa.uint32(), ["0", "4294967295"]),
+    ("u64", pa.uint64(), ["0", "18446744073709551615"]),
+    ("fp32", pa.float32(), ["-1.5", "1.5"]),
+    ("fp64", pa.float64(), ["-1.5", "1.5"]),
+])
+def test_cast_physical_width_and_values_survive_schema_reload(target, arrow_type, values):
+    prepared = prepare(derive(Items), _mapping(TypeCast(to=target)))
+    source = Items([Item(value, "payload") for value in values])
+    rows = decompose(source, prepared)
+    reloaded = TypeSpec.from_frictionless(prepared.tables["items"].typespec.to_frictionless())
+    table = pa.Table.from_pylist(rows["items"], schema=to_arrow_schema(reloaded))
+    assert table.schema.field("id").type == arrow_type
+    convert = float if pa.types.is_floating(arrow_type) else int
+    assert table.column("id").to_pylist() == [convert(value) for value in values]
+    assert reconstruct({**rows, "items": table.to_pylist()}, prepared) == source
+
+
+@pytest.mark.parametrize(("declared", "override", "compatible"), [
+    (MountainashDtype.I64, "int8", True),
+    (MountainashDtype.I8, "int64", False),
+])
+def test_explicit_schema_uses_native_override_for_physical_compatibility(declared, override, compatible):
+    mapping = _mapping(TypeCast(to="i8"))
+    inferred = prepare(derive(Items), mapping)
+    schemas = {name: table.typespec for name, table in inferred.tables.items()}
+    schemas["items"].fields = [
+        FieldSpec(name="id", dtype=declared, backend_type=override, missing_values=[]) if field.name == "id" else field
+        for field in schemas["items"].fields
+    ]
+    if not compatible:
+        with pytest.raises(StructureMapError) as caught:
+            prepare(derive(Items), mapping, relations=schemas)
+        assert caught.value.code == "incompatible_schema"
+        return
+    prepared = prepare(derive(Items), mapping, relations=schemas)
+    source = Items([Item("-128", "payload"), Item("127", "payload")])
+    rows = decompose(source, prepared)
+    table = pa.Table.from_pylist(rows["items"], schema=to_arrow_schema(prepared.tables["items"].typespec))
+    assert table.schema.field("id").type == pa.int8()
+    assert reconstruct({**rows, "items": table.to_pylist()}, prepared) == source
+
+
+def test_inverse_projection_honors_native_override_before_canonical_dtype():
+    source_field = FieldSpec(
+        name="amount", dtype=MountainashDtype.I8,
+        backend_type=NativeDtype(value=pl.Int64, target=TypeTarget.POLARS), missing_values=[],
+    )
+    projection = prepare_value_projection((source_field,), TypeCast(to="string"), path="amount")
+    assert projection.apply([{"amount": "128"}], reverse=True) == [{"amount": 128}]
 
 
 def test_source_keys_that_collide_after_cast_are_rejected():

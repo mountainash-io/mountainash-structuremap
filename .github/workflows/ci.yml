@@ -26,17 +26,25 @@ jobs:
           app-id: ${{ secrets.CI_APP_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           owner: mountainash-io
-          repositories: mountainash
+          repositories: |
+            mountainash
+            mountainash-files
+            mountainash-transport
+            mountainash-auth-client
+            mountainash-settings
           permission-contents: read
       - name: Run tests
         env:
           CI_READ_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config --global url."https://x-access-token:${CI_READ_TOKEN}@github.com/mountainash-io/mountainash.git".insteadOf https://github.com/mountainash-io/mountainash.git
+          for repository in mountainash mountainash-files mountainash-transport mountainash-auth-client mountainash-settings; do
+            git config --global url."https://x-access-token:${CI_READ_TOKEN}@github.com/mountainash-io/${repository}.git".insteadOf "https://github.com/mountainash-io/${repository}.git"
+          done
           python -m pip install "hatch>=1.14"
           hatch run test:test
           hatch run test:python examples/pydantic_roundtrip.py
           hatch run test:python examples/composable_mapping.py
+          hatch run test:python examples/execution_roundtrip.py
 
   foundation-wheel:
     name: foundation-wheel
@@ -54,13 +62,20 @@ jobs:
           app-id: ${{ secrets.CI_APP_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           owner: mountainash-io
-          repositories: mountainash
+          repositories: |
+            mountainash
+            mountainash-files
+            mountainash-transport
+            mountainash-auth-client
+            mountainash-settings
           permission-contents: read
       - name: Qualify installed wheel
         env:
           CI_READ_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config --global url."https://x-access-token:${CI_READ_TOKEN}@github.com/mountainash-io/mountainash.git".insteadOf https://github.com/mountainash-io/mountainash.git
+          for repository in mountainash mountainash-files mountainash-transport mountainash-auth-client mountainash-settings; do
+            git config --global url."https://x-access-token:${CI_READ_TOKEN}@github.com/mountainash-io/${repository}.git".insteadOf "https://github.com/mountainash-io/${repository}.git"
+          done
           python -m pip install "hatch>=1.14"
           hatch run test:wheel-smoke
 
@@ -93,12 +108,19 @@ jobs:
           app-id: ${{ secrets.CI_APP_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           owner: mountainash-io
-          repositories: mountainash
+          repositories: |
+            mountainash
+            mountainash-files
+            mountainash-transport
+            mountainash-auth-client
+            mountainash-settings
           permission-contents: read
       - name: Check types
         env:
           CI_READ_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config --global url."https://x-access-token:${CI_READ_TOKEN}@github.com/mountainash-io/mountainash.git".insteadOf https://github.com/mountainash-io/mountainash.git
+          for repository in mountainash mountainash-files mountainash-transport mountainash-auth-client mountainash-settings; do
+            git config --global url."https://x-access-token:${CI_READ_TOKEN}@github.com/mountainash-io/${repository}.git".insteadOf "https://github.com/mountainash-io/${repository}.git"
+          done
           python -m pip install "hatch>=1.14"
           hatch run mypy:check

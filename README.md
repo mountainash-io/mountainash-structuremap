@@ -213,6 +213,11 @@ keys; casting `"01"` and `"1"` to the same source key is an error. Reconstructio
 applies the reverse native-column projection before native construction. Casts
 can normalize values (`"01"` → `1` → `"1"`); they do not promise lexical identity.
 
+Cast schemas retain canonical numeric widths through Mountainash
+`FieldSpec(dtype=...)`, descriptor reload and Arrow materialization, including
+unsigned 64-bit values. Explicit native overrides retain Mountainash precedence
+in physical schema comparison and reverse projections.
+
 `EncodingCodec` needs `fields` and `encode`; `DecodingCodec` needs `fields`, `check`
 and `decode`. `ScalarCodec` combines them. Codecs use tuples of cells and
 `CellLocation` from the public `codecs` module. An encode-only or decode-only codec
@@ -555,8 +560,8 @@ Presence preservation, EAV alternatives, Widen/Combined shared projections and
 custom cast implementations remain unavailable. Preparation refuses unavailable
 strategies rather than weakening them. Native-binding limits are described above.
 
-Arrow/Parquet dataset persistence, atomic filesystem output and incremental
-execution are separate work; portable declarations do not qualify those surfaces.
+Reconstruction remains in-memory. Incremental JSON and incremental reconstruction
+are unavailable.
 
 The former namespace blocker in
 [issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
@@ -565,13 +570,130 @@ StructureMap round-trips. The failing handwritten fixture omitted namespace
 metadata emitted by the generator. Qualification includes supplied generated
 models; generator use is test setup, not framework functionality.
 
+## Typed storage and local output
+
+Import the execution operations from `mountainash_structuremap.execution`:
+
+- `decompose_arrow(value, prepared)` returns Arrow tables with the prepared
+  schemas, including empty tables.
+- `decompose_to(value, prepared, output, format="parquet", buffer_rows=10_000)`
+  publishes a managed Parquet dataset; `format="arrow"` selects Arrow IPC files.
+- `decompose_xml_to(source, prepared, output, record_path="groups/entries",
+  format="parquet", buffer_rows=10_000)` reads XML incrementally through the native
+  xsdata binding and publishes the same managed typed dataset.
+- `reconstruct_from(source, prepared)` reconstructs from a managed dataset `Path`
+  or explicit logical-name bindings to Arrow tables and/or `FileSourceSpec`s.
+- `reconstruct_to(source, prepared, output, packaging="standalone")` publishes
+  native XML/JSON through the selected binding. `packaging="managed"` includes
+  a completion manifest alongside the native `document` payload.
+
+`OutputTarget(root: Path, name, namespace=None, completion="atomic", replace=False)`
+resolves to `root / namespace / name`. Namespace is optional; it does not alter
+logical table names or enable replacement. Names are single path components;
+namespaces must remain within the root without `.` or `..` components.
+`ExecutionResult` contains the published `path`, `kind` and immutable `row_counts`;
+native document results have no output tables and therefore empty counts.
+
+The existing `decompose`/`reconstruct` row APIs retain their signatures. One
+document-scoped session owns their traversal, casts, keys and finalized rows.
+Writers flush synchronously with at most `buffer_rows` pending rows per table.
+This does not make native-object decomposition or reconstruction bounded-memory:
+the full native value/current mapped record may already be materialized.
+Declared source-key identity tracking grows with document cardinality; generated
+keys use a counter. Generated keys are opaque identities, not stable identifiers
+between different traversal schedules.
+
+### Typed input
+
+Files-based reads require `[files]`. In-memory Arrow operations and local output
+writers do not import that optional integration. Explicit files require no
+StructureMap manifest. Their physical column names/order/types must match the
+prepared schemas; incompatible data is not silently cast. Arrow carrier
+nullability and unrelated metadata do not replace the mapping's own checks.
+Parquet inspection and reading use Mountainash Files; IPC uses its random-access
+stream acquisition and PyArrow's IPC file reader.
+
+Each `FileSourceSpec` must identify one concrete source: no unresolved templates,
+globs, archive selectors or `on_missing="skip"`. Resolve those selections first.
+Inspection/read cardinality and actual schemas are checked; this does not
+establish source immutability between reads. Unsupported random-access transforms
+fail rather than triggering a buffering fallback.
+
+### Incremental XML
+
+Install `[xml,files]` and supply one concrete XML `FileSourceSpec`. Acquisition uses
+Files' sequential stream; native xsdata metadata and parsing interpret the XML.
+Omit the source format or use `"xml"`/an unconfigured `XmlSpec`. Files XPath and
+encoding/parse-policy overrides are not accepted: `record_path` selects mapped
+members, not an XPath. Internal entity content is preserved; external XML files
+and URLs are not resolved.
+
+`record_path` is an exact slash-separated authored member path. Direct and wrapped
+collections, nested inline records and repeated record ancestors are supported.
+Native wrappers remain transparent: mixed wrapped and direct occurrences retain
+their order and parent scopes. Selection uses expanded QNames and structural
+ancestry, not local-name matching.
+Repeated alternatives support Split, Prefixed and Shared layouts. Complete
+records retain native choices, `xsi:type`, inline children, nested collections,
+scalar codecs and mixed/wildcard fragments, including text split across reads.
+Nil values follow the native model: nullable choice items require a nullable
+item annotation when xsdata returns `None`; execution does not invent a selected
+QName wrapper absent from native parsing.
+
+Root/ancestor attributes are bound at scope start. Other scalar and complex
+headers, including content after the selected records, are retained until that
+scope closes. Empty collections and omitted members use native defaults and
+required-member semantics. Complete records are constructed natively; envelope
+members enter the shared mapping session without constructing a partial ancestor.
+
+Generated keys and source keys derived from ancestor attributes, including casts,
+defaults and composite ancestor carry, can be ready before record emission.
+Element/header key dependencies fail **before input is opened**: native field
+declaration order does not guarantee XML arrival order. Select a compatible
+record boundary or use in-memory decomposition. Paths through an alternative
+ancestor are unavailable; select the enclosing repeated alternative as the
+complete-record boundary instead. These restrictions do not apply to supported
+constructs inside a complete record.
+
+Rows can flush before document end. Memory includes live ancestor/header context,
+the current native record and its mapped rows, bounded per-table writer buffers,
+parser read-ahead and source-key identity tracking. This is not a total
+constant-memory guarantee. Local untransformed files are the bounded-input
+qualification target; delegated transport transforms may buffer.
+
+### Publication and failure
+
+Destination preflight runs before reading input. Existing output requires explicit
+replacement permission; managed output may replace only an empty directory,
+never an existing nonempty result. Standalone output may replace a regular file.
+No implicit renaming, backup swap or deletion of prior successful results occurs.
+
+Output is staged beside its destination. Managed table results contain
+`manifest.json` and ordinal paths such as `tables/0000.parquet`; manifest entries
+retain the logical names verbatim. Manifest version 1 records `status`, `kind`
+and table `{name, path, rows, format}` entries, or `document: {path}`.
+Writers close before the complete manifest and final rename. This is local staged
+publication, not crash durability or concurrent-writer isolation.
+
+On failure, `atomic` attempts staging removal; `keep_partial` retains diagnostic
+files with failed metadata and successfully written row counts. Secondary cleanup
+or metadata errors are attached to the original failure. Reserved
+`.structuremap-staging-` directories cannot be read as completed managed inputs,
+even if failure metadata could not be written. Explicit file bindings can inspect
+retained data. A standalone publication followed by cleanup failure reports the
+already published target and leftover staging; it does not roll back the file.
+
+Run `hatch run test:python examples/execution_roundtrip.py` for independently
+authored Parquet → native XML → incremental Parquet/IPC → fresh reconstruction
+with buffer sizes 1 and 10,000, plus both native output packages.
+
 ## Development
 
 Requires Python 3.12+, Git and Hatch 1.14+; Hatch manages its configured uv
 installer. The package requires Pydantic 2.11+ for native name-only validation.
 
 Mountainash is sourced directly from GitHub at a pinned commit on `develop`:
-`a9725e69831fc209307ed0c82d524e3dbf43479e`. The dependency in `pyproject.toml`
+`c1e8da53822af9b61079a34f00c811ce5d53c733`. The dependency in `pyproject.toml`
 is the single pin used by source environments, wheel installation and CI.
 No package-index publication or sibling checkout is required.
 
@@ -580,12 +702,19 @@ first installation. For GitHub CLI users, `gh auth setup-git` configures Git to
 use the existing login. The built wheel retains the pinned GitHub dependency,
 so installing it also requires Git and read access to that repository.
 
+PyArrow is a direct dependency. The optional `[files]` extra installs immutable
+Git revisions of Mountainash Files, Transport, Auth Client and Settings; Git read
+access to those repositories is required as well. Source tests select `[xml,files]`.
+The `[xml]` extra includes xsdata 26.2 and lxml. Neither optional integration is
+required for base native row-table execution.
+
 ```bash
 hatch run test:test
 hatch run test:python examples/dataclass_roundtrip.py
 hatch run test:python examples/xml_roundtrip.py
 hatch run test:python examples/pydantic_roundtrip.py
 hatch run test:python examples/composable_mapping.py
+hatch run test:python examples/execution_roundtrip.py
 hatch run ruff:check
 hatch run mypy:check
 hatch build
@@ -597,29 +726,37 @@ a fresh preparation. No central documentation checkout is needed to build or
 run this package. Product work uses feature branches targeting protected
 `develop`; releases go through a release branch to `main`.
 
-The wheel smoke builds a new wheel and installs `[xml]` and base-only packages in
-separate temporary environments, checking dependencies with `pip check`. Both run
-Pydantic reconstruction from independent renamed/ordered rows, native JSON
-round-trips and constrained-input rejection. An additional base-only environment
-installs `pydantic==2.11.0` and runs the same Pydantic and dataclass scenarios.
-Every environment reports its actual installed versions.
-The XML run reconstructs independently authored Split, recursive and fragment
-tables. Separate isolated writer/reader processes transfer portable declarations,
-mapping, TypeSpecs and actual Decimal/date/time/datetime table carriers.
-Assertions distinguish absent offsets from explicit UTC. Base-only execution
-proves dataclass support and actionable detected/explicit missing-XML errors.
-Every environment also loads retained mapping JSON and independently declared
-Frictionless schemas in a fresh reader, explicitly supplies an application-owned
-date component outside the package, and reconstructs independent tuple/Literal/
-Decimal/date and shared-role rows. Duplicate values, gapped positions, empty
-collections and all-null date cells are checked separately from the emitted-row
-transport control.
-All runs use the installed package outside the checkout; only copied application
-fixtures are added to the import path. Temporary environments and transport
+The wheel smoke builds a new wheel and installs `[xml,files]` and base-only
+packages in separate temporary environments, checking dependencies with
+`pip check`. Current Pydantic and the minimum `pydantic==2.11.0` retain native
+JSON, independent-row and constrained-input coverage. Base-only execution
+imports the execution API, performs a real Arrow round trip, writes managed
+Parquet, and proves that reading it requests the missing `[files]` extra.
+Detected/explicit missing-XML guidance is checked separately.
+
+Separate isolated writer/reader processes qualify both Parquet and IPC through
+nine cases per format: XML Split/recursive/fragments and temporal companions;
+external directional multi-column codecs with populated, empty and all-null
+values; shared roles; composite ancestor keys; Prefixed alternatives;
+Shared/Exact alternatives; and Pydantic models. Readers consume retained
+declarations, mapping and schemas with explicitly supplied application classes,
+and reconstruct both managed results and independently authored files.
+
+The installed XML path also streams a native document into each storage format
+and reconstructs standalone and managed XML in a fresh process. Assertions cover
+exact Decimal values, temporal offset presence, namespaces, order and mixed
+text/tails. Pydantic storage reconstructs native JSON with independently checked
+aliases. No prepared objects or decomposition caches cross process boundaries.
+
+All runs use `python -I` and the installed package outside the checkout; only
+copied application fixtures are added to the import path. No source overlay or
+central documentation checkout is used. Temporary environments and transport
 files are removed afterward.
 
 CI runs `foundation-tests`, `foundation-wheel`, `foundation-lint` and
 `foundation-types`. Source, wheel and CI qualification use the same Mountainash
 revision. Private dependency fetches use the organization secrets `CI_APP_ID`
 and `CI_APP_PRIVATE_KEY`; the app must have read-only contents access to
-`mountainash-io/mountainash`. No central documentation checkout is required.
+`mountainash`, `mountainash-files`, `mountainash-transport`,
+`mountainash-auth-client` and `mountainash-settings` in `mountainash-io`—the exact
+private dependency chain declared in `pyproject.toml`.

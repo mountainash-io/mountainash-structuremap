@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -17,7 +17,7 @@ from mountainash_structuremap.execution_session import DecompositionSession
 from mountainash_structuremap.prepared import PreparedMapping
 from mountainash_structuremap.publication import Publication, execution_error, output_path, table_sources
 from mountainash_structuremap.reconstruct import reconstruct
-from mountainash_structuremap.table_io import ArrowCollector, FileTableSink, read_input_tables
+from mountainash_structuremap.table_io import ArrowCollector, FileTableSink, _check_source, read_input_tables
 
 if TYPE_CHECKING:
     from mountainash_files import FileSourceSpec
@@ -82,8 +82,99 @@ def decompose_to(
     buffer_rows: int = 10_000,
 ) -> ExecutionResult:
     """Map one native value and publish a complete typed local dataset."""
+    return _write_tables(
+        prepared, output, lambda session: session.consume(value), format=format, buffer_rows=buffer_rows
+    )
+
+
+def decompose_xml_to(
+    source: FileSourceSpec,
+    prepared: PreparedMapping[T],
+    output: OutputTarget,
+    *,
+    record_path: str,
+    format: Literal["parquet", "arrow"] = "parquet",
+    buffer_rows: int = 10_000,
+) -> ExecutionResult:
+    """Incrementally map declared XML records and their envelope into typed tables."""
     _direction(prepared, "decompose")
-    if format not in {"parquet", "arrow"} or type(buffer_rows) is not int or buffer_rows <= 0:
+    try:
+        import mountainash_files as files
+        from mountainash_files.formats.xml import XmlSpec
+    except ImportError as exc:
+        raise StructureMapError(
+            "unavailable_capability",
+            "XML file input requires Mountainash Files",
+            remedy="Install mountainash-structuremap[files,xml] for incremental XML input",
+        ) from exc
+    if not isinstance(source, files.FileSourceSpec):
+        raise StructureMapError(
+            "invalid_source",
+            "XML input requires a FileSourceSpec",
+            remedy="Supply one concrete XML source using FileSourceSpec",
+        )
+    _check_source(source, "")
+    if source.format not in (None, "xml", XmlSpec()):
+        raise StructureMapError(
+            "invalid_source",
+            "Files XML format and parse-policy overrides are not supported by native XML execution",
+            path=source.path,
+            remedy="Omit source.format or use 'xml' without parse options; select records with record_path",
+        )
+    try:
+        from mountainash_structuremap.bindings.xml_stream import prepare_xml_stream
+    except ImportError as exc:
+        raise StructureMapError(
+            "unavailable_capability",
+            "Incremental XML input requires xsdata and lxml",
+            remedy="Install mountainash-structuremap[xml] for incremental XML input",
+        ) from exc
+    plan = prepare_xml_stream(prepared, record_path)
+
+    def consume(session: DecompositionSession) -> None:
+        try:
+            manager = files.stream(source, access="sequential")
+            handle = manager.__enter__()
+            failure: BaseException | None = None
+            try:
+                plan.run(handle, session)
+            except BaseException as exc:
+                failure = exc
+                raise
+            finally:
+                try:
+                    manager.__exit__(
+                        type(failure) if failure is not None else None,
+                        failure,
+                        failure.__traceback__ if failure is not None else None,
+                    )
+                except BaseException as exc:
+                    if failure is None:
+                        raise
+                    failure.add_note(f"Closing XML input at {source.path!r} also failed: {exc}")
+        except StructureMapError:
+            raise
+        except Exception as exc:
+            raise StructureMapError(
+                "source_read_failed",
+                "Could not consume XML source",
+                path=source.path,
+                remedy="Resolve the reported source or transport error before retrying",
+            ) from exc
+
+    return _write_tables(prepared, output, consume, format=format, buffer_rows=buffer_rows)
+
+
+def _write_tables(
+    prepared: PreparedMapping[Any],
+    output: OutputTarget,
+    consume: Callable[[DecompositionSession], None],
+    *,
+    format: Literal["parquet", "arrow"],
+    buffer_rows: int,
+) -> ExecutionResult:
+    _direction(prepared, "decompose")
+    if format not in ("parquet", "arrow") or type(buffer_rows) is not int or buffer_rows <= 0:
         raise StructureMapError(
             "invalid_output",
             "Invalid table format or buffer_rows",
@@ -102,7 +193,7 @@ def decompose_to(
         paths = {entry["name"]: staging / entry["path"] for entry in entries}
         sink = FileTableSink(prepared.tables, paths, format=format, buffer_rows=buffer_rows)
         session = DecompositionSession(prepared, sink)
-        session.consume(value)
+        consume(session)
         session.finish()
         sink.close()
         for entry in entries:

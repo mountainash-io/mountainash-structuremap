@@ -1,4 +1,4 @@
-"""Independent Parquet -> native XML -> managed Arrow and Parquet results."""
+"""Independent Parquet -> native XML -> incremental typed datasets."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,7 +9,13 @@ import pyarrow.parquet as pq
 from mountainash_files import FileSourceSpec
 
 from mountainash_structuremap import MappingSpec, UseOverride, derive, parse, prepare
-from mountainash_structuremap.execution import OutputTarget, decompose_to, reconstruct_from, reconstruct_to
+from mountainash_structuremap.execution import (
+    OutputTarget,
+    decompose_to,
+    decompose_xml_to,
+    reconstruct_from,
+    reconstruct_to,
+)
 from mountainash_structuremap.mapping import TypeCast
 
 
@@ -67,6 +73,17 @@ def main() -> None:
             )
             assert reconstruct_from(result.path, mapping()) == native
             print(f"Native value -> {format} -> fresh native reconstruction:", dict(result.row_counts))
+            for buffer_rows in (1, 10_000):
+                streamed = decompose_xml_to(
+                    FileSourceSpec(path=str(document.path)),
+                    mapping(),
+                    OutputTarget(root, f"xml-{format}-{buffer_rows}", namespace="results"),
+                    record_path="lines",
+                    format=format,
+                    buffer_rows=buffer_rows,
+                )
+                assert reconstruct_from(streamed.path, mapping()) == Order("external", [Line("-128"), Line("127")])
+                print(f"Incremental XML -> {format} (buffer_rows={buffer_rows}):", dict(streamed.row_counts))
         managed = reconstruct_to(sources, mapping(), OutputTarget(root, "document"), packaging="managed")
         assert parse((managed.path / "document").read_text(), mapping()) == native
         print("Standalone and managed native document publication passed")

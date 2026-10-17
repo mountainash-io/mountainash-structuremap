@@ -560,8 +560,9 @@ Presence preservation, EAV alternatives, Widen/Combined shared projections and
 custom cast implementations remain unavailable. Preparation refuses unavailable
 strategies rather than weakening them. Native-binding limits are described above.
 
-Incremental XML input and installed-wheel/hosted qualification of the new
-execution surface remain separate Plan 5 checkpoints. Reconstruction is in-memory.
+Installed-wheel/hosted qualification of the new execution surface remains a
+separate Plan 5 checkpoint. Reconstruction is in-memory; incremental JSON and
+incremental reconstruction are unavailable.
 
 The former namespace blocker in
 [issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
@@ -578,6 +579,9 @@ Import the execution operations from `mountainash_structuremap.execution`:
   schemas, including empty tables.
 - `decompose_to(value, prepared, output, format="parquet", buffer_rows=10_000)`
   publishes a managed Parquet dataset; `format="arrow"` selects Arrow IPC files.
+- `decompose_xml_to(source, prepared, output, record_path="groups/entries",
+  format="parquet", buffer_rows=10_000)` reads XML incrementally through the native
+  xsdata binding and publishes the same managed typed dataset.
 - `reconstruct_from(source, prepared)` reconstructs from a managed dataset `Path`
   or explicit logical-name bindings to Arrow tables and/or `FileSourceSpec`s.
 - `reconstruct_to(source, prepared, output, packaging="standalone")` publishes
@@ -616,6 +620,48 @@ Inspection/read cardinality and actual schemas are checked; this does not
 establish source immutability between reads. Unsupported random-access transforms
 fail rather than triggering a buffering fallback.
 
+### Incremental XML
+
+Install `[xml,files]` and supply one concrete XML `FileSourceSpec`. Acquisition uses
+Files' sequential stream; native xsdata metadata and parsing interpret the XML.
+Omit the source format or use `"xml"`/an unconfigured `XmlSpec`. Files XPath and
+encoding/parse-policy overrides are not accepted: `record_path` selects mapped
+members, not an XPath. Internal entity content is preserved; external XML files
+and URLs are not resolved.
+
+`record_path` is an exact slash-separated authored member path. Direct and wrapped
+collections, nested inline records and repeated record ancestors are supported.
+Native wrappers remain transparent: mixed wrapped and direct occurrences retain
+their order and parent scopes. Selection uses expanded QNames and structural
+ancestry, not local-name matching.
+Repeated alternatives support Split, Prefixed and Shared layouts. Complete
+records retain native choices, `xsi:type`, inline children, nested collections,
+scalar codecs and mixed/wildcard fragments, including text split across reads.
+Nil values follow the native model: nullable choice items require a nullable
+item annotation when xsdata returns `None`; execution does not invent a selected
+QName wrapper absent from native parsing.
+
+Root/ancestor attributes are bound at scope start. Other scalar and complex
+headers, including content after the selected records, are retained until that
+scope closes. Empty collections and omitted members use native defaults and
+required-member semantics. Complete records are constructed natively; envelope
+members enter the shared mapping session without constructing a partial ancestor.
+
+Generated keys and source keys derived from ancestor attributes, including casts,
+defaults and composite ancestor carry, can be ready before record emission.
+Element/header key dependencies fail **before input is opened**: native field
+declaration order does not guarantee XML arrival order. Select a compatible
+record boundary or use in-memory decomposition. Paths through an alternative
+ancestor are unavailable; select the enclosing repeated alternative as the
+complete-record boundary instead. These restrictions do not apply to supported
+constructs inside a complete record.
+
+Rows can flush before document end. Memory includes live ancestor/header context,
+the current native record and its mapped rows, bounded per-table writer buffers,
+parser read-ahead and source-key identity tracking. This is not a total
+constant-memory guarantee. Local untransformed files are the bounded-input
+qualification target; delegated transport transforms may buffer.
+
 ### Publication and failure
 
 Destination preflight runs before reading input. Existing output requires explicit
@@ -639,8 +685,8 @@ retained data. A standalone publication followed by cleanup failure reports the
 already published target and leftover staging; it does not roll back the file.
 
 Run `hatch run test:python examples/execution_roundtrip.py` for independently
-authored Parquet → native XML → managed Parquet/IPC → fresh reconstruction, plus
-both native output packages.
+authored Parquet → native XML → incremental Parquet/IPC → fresh reconstruction
+with buffer sizes 1 and 10,000, plus both native output packages.
 
 ## Development
 

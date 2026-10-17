@@ -8,6 +8,8 @@
 - Share one document-scoped decomposition session across complete values and scheduled envelope/record occurrences, retaining finalized relationships and releasing delivered record state.
 - Add typed Arrow collection, synchronous bounded Parquet/IPC writers, and schema-checked reconstruction from independent Arrow tables or explicit Files sources.
 - Add bidirectional local execution APIs with namespace-aware destination preflight, standalone/managed native output, Atomic/Keep partial staging, and primary-error-preserving cleanup.
+- Add incremental XML decomposition through native xsdata parsing and the shared session, with exact member/QName ancestry, wrapped/nested records, nullable choices and scopes, retained headers, and chunk-safe mixed fragments.
+- Preflight incremental ancestor key readiness; preserve bounded writer batches and complete records without buffering the selected collection or constructing partial ancestors.
 - Add canonical JSON/safe-YAML mapping and structure authoring, generated JSON Schemas, namespace assembly and a thin snapshotting fluent builder.
 - Retain explicit-null override semantics and Mountainash Frictionless relation descriptors in portable bundles; reject duplicate keys, executable YAML tags, non-JSON values and unknown envelope fields without importing native bindings.
 - Exercise portable authoring through independently declared schemas and shared-role rows in the composable mapping example.

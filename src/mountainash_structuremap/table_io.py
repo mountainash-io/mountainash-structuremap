@@ -204,7 +204,7 @@ def _check_source(source: FileSourceSpec, table: str) -> None:
     if source.glob is not None or source.archive is not None or source.on_missing != "raise" or template:
         raise StructureMapError(
             "nonconcrete_source",
-            "Execution requires one concrete source per logical table",
+            "Execution requires one concrete source",
             table=table,
             path=source.path,
             owner="table storage",

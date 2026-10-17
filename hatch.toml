@@ -30,7 +30,7 @@ python = "3.12"
 installer = "uv"
 skip-install = false
 features = ["xml", "files"]
-dependencies = ["mypy", "types-PyYAML", "pyarrow-stubs"]
+dependencies = ["mypy", "types-PyYAML", "pyarrow-stubs", "lxml-stubs"]
 
 [envs.mypy.scripts]
 check = "mypy src/mountainash_structuremap"

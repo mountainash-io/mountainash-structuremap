@@ -3,7 +3,7 @@
 python = "3.12"
 installer = "uv"
 skip-install = false
-features = ["xml"]
+features = ["xml", "files"]
 dependencies = [
   "pytest>=8",
   "hatch>=1.14",

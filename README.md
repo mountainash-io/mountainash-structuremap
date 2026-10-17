@@ -213,6 +213,11 @@ keys; casting `"01"` and `"1"` to the same source key is an error. Reconstructio
 applies the reverse native-column projection before native construction. Casts
 can normalize values (`"01"` → `1` → `"1"`); they do not promise lexical identity.
 
+Cast schemas retain canonical numeric widths through Mountainash
+`FieldSpec(dtype=...)`, descriptor reload and Arrow materialization, including
+unsigned 64-bit values. Explicit native overrides retain Mountainash precedence
+in physical schema comparison and reverse projections.
+
 `EncodingCodec` needs `fields` and `encode`; `DecodingCodec` needs `fields`, `check`
 and `decode`. `ScalarCodec` combines them. Codecs use tuples of cells and
 `CellLocation` from the public `codecs` module. An encode-only or decode-only codec
@@ -571,7 +576,7 @@ Requires Python 3.12+, Git and Hatch 1.14+; Hatch manages its configured uv
 installer. The package requires Pydantic 2.11+ for native name-only validation.
 
 Mountainash is sourced directly from GitHub at a pinned commit on `develop`:
-`a9725e69831fc209307ed0c82d524e3dbf43479e`. The dependency in `pyproject.toml`
+`c1e8da53822af9b61079a34f00c811ce5d53c733`. The dependency in `pyproject.toml`
 is the single pin used by source environments, wheel installation and CI.
 No package-index publication or sibling checkout is required.
 
@@ -579,6 +584,12 @@ Configure authenticated Git access to `mountainash-io/mountainash` before the
 first installation. For GitHub CLI users, `gh auth setup-git` configures Git to
 use the existing login. The built wheel retains the pinned GitHub dependency,
 so installing it also requires Git and read access to that repository.
+
+PyArrow is a direct dependency. The optional `[files]` extra installs immutable
+Git revisions of Mountainash Files, Transport, Auth Client and Settings; Git read
+access to those repositories is required as well. Source tests select `[xml,files]`.
+The `[xml]` extra includes xsdata 26.2 and lxml. Neither optional integration is
+required for base native row-table execution.
 
 ```bash
 hatch run test:test

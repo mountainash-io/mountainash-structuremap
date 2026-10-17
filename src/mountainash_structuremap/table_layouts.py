@@ -5,8 +5,7 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Callable, Literal, Mapping, cast
 
-from mountainash.core.dtypes import parse_cast_target
-from mountainash.typespec.converters import resolve_field_canonical
+from mountainash.typespec.converters import resolve_field_canonical, to_arrow_schema
 from mountainash.typespec.spec import FieldSpec, TypeSpec
 from mountainash.typespec.universal_types import UniversalType
 
@@ -30,18 +29,12 @@ from mountainash_structuremap.prepared import (
 
 def same_physical_type(left: FieldSpec, right: FieldSpec) -> bool:
     """Compare effective Mountainash storage types and structured field metadata."""
+    has_native_override = left.backend_type is not None or right.backend_type is not None
+
     def canonical(field: FieldSpec) -> object:
-        if field.dtype is not None:
-            return field.dtype
-        if field.backend_type is not None:
-            try:
-                return parse_cast_target(field.backend_type)
-            except (TypeError, ValueError):
-                return "backend_type", field.backend_type
-        try:
-            return resolve_field_canonical(field)
-        except (TypeError, ValueError):
-            return field.dtype, field.backend_type, field.type
+        if has_native_override:
+            return to_arrow_schema(TypeSpec(fields=[field])).field(0).type
+        return resolve_field_canonical(field)
 
     structured = ("item_type", "item_object_fields", "object_fields")
     return (

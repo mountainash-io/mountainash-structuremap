@@ -6,10 +6,9 @@ from dataclasses import dataclass
 from typing import cast
 
 from mountainash import BaseExpressionAPI, MountainashError, col, relation
-from mountainash.core.dtypes import DecimalDtype, MountainashDtype, parse_cast_target
-from mountainash.typespec.converters import resolve_field_canonical
+from mountainash.core.dtypes import DecimalDtype, MountainashDtype, NativeDtype, parse_cast_target
+from mountainash.typespec.converters import resolve_field_canonical, to_polars_schema
 from mountainash.typespec.spec import FieldSpec, TypeSpec
-from mountainash.typespec.universal_types import UniversalType, from_canonical
 
 from mountainash_structuremap.codecs import Cell
 from mountainash_structuremap.errors import StructureMapError
@@ -80,30 +79,12 @@ class ValueProjection:
 
 
 def _field_for_target(field: FieldSpec, target: MountainashDtype | DecimalDtype) -> FieldSpec:
-    if isinstance(target, DecimalDtype):
-        return FieldSpec(
-            name=field.name,
-            type=UniversalType.NUMBER,
-            dtype=target,
-            missing_values=[],
-        )
-    universal, format_hint = from_canonical(target)
-    return FieldSpec(
-        name=field.name,
-        type=universal,
-        format=format_hint or "default",
-        backend_type=target.value,
-        missing_values=[],
-    )
+    return FieldSpec(name=field.name, dtype=target, missing_values=[])
 
 
-def _reverse_target(field: FieldSpec, *, path: str) -> MountainashDtype | DecimalDtype:
-    if field.dtype is not None:
-        return field.dtype
+def _reverse_target(field: FieldSpec, *, path: str) -> MountainashDtype | DecimalDtype | NativeDtype:
     if field.backend_type is not None:
-        target = parse_cast_target(field.backend_type)
-        if isinstance(target, (MountainashDtype, DecimalDtype)):
-            return target
+        return parse_cast_target(to_polars_schema(TypeSpec(fields=[field]))[field.name])
     canonical = resolve_field_canonical(field)
     if isinstance(canonical, (MountainashDtype, DecimalDtype)):
         return canonical

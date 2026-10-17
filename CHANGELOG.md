@@ -5,6 +5,9 @@
 - Adopt Mountainash `c1e8da53822af9b61079a34f00c811ce5d53c733` canonical dtype fields, preserving numeric widths through prepared schemas, descriptor reload and Arrow values.
 - Honor explicit native override precedence in schema reconciliation and inverse casts.
 - Declare PyArrow directly and add a pinned, installable Files dependency extra plus lxml for XML execution.
+- Share one document-scoped decomposition session across complete values and scheduled envelope/record occurrences, retaining finalized relationships and releasing delivered record state.
+- Add typed Arrow collection, synchronous bounded Parquet/IPC writers, and schema-checked reconstruction from independent Arrow tables or explicit Files sources.
+- Add bidirectional local execution APIs with namespace-aware destination preflight, standalone/managed native output, Atomic/Keep partial staging, and primary-error-preserving cleanup.
 - Add canonical JSON/safe-YAML mapping and structure authoring, generated JSON Schemas, namespace assembly and a thin snapshotting fluent builder.
 - Retain explicit-null override semantics and Mountainash Frictionless relation descriptors in portable bundles; reject duplicate keys, executable YAML tags, non-JSON values and unknown envelope fields without importing native bindings.
 - Exercise portable authoring through independently declared schemas and shared-role rows in the composable mapping example.

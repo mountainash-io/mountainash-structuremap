@@ -29,8 +29,8 @@ check = "ruff check src tests examples"
 python = "3.12"
 installer = "uv"
 skip-install = false
-features = ["xml"]
-dependencies = ["mypy", "types-PyYAML"]
+features = ["xml", "files"]
+dependencies = ["mypy", "types-PyYAML", "pyarrow-stubs"]
 
 [envs.mypy.scripts]
 check = "mypy src/mountainash_structuremap"

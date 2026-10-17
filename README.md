@@ -560,8 +560,8 @@ Presence preservation, EAV alternatives, Widen/Combined shared projections and
 custom cast implementations remain unavailable. Preparation refuses unavailable
 strategies rather than weakening them. Native-binding limits are described above.
 
-Arrow/Parquet dataset persistence, atomic filesystem output and incremental
-execution are separate work; portable declarations do not qualify those surfaces.
+Incremental XML input and installed-wheel/hosted qualification of the new
+execution surface remain separate Plan 5 checkpoints. Reconstruction is in-memory.
 
 The former namespace blocker in
 [issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
@@ -569,6 +569,78 @@ was withdrawn: models generated for that namespace structure passed native and
 StructureMap round-trips. The failing handwritten fixture omitted namespace
 metadata emitted by the generator. Qualification includes supplied generated
 models; generator use is test setup, not framework functionality.
+
+## Typed storage and local output
+
+Import the execution operations from `mountainash_structuremap.execution`:
+
+- `decompose_arrow(value, prepared)` returns Arrow tables with the prepared
+  schemas, including empty tables.
+- `decompose_to(value, prepared, output, format="parquet", buffer_rows=10_000)`
+  publishes a managed Parquet dataset; `format="arrow"` selects Arrow IPC files.
+- `reconstruct_from(source, prepared)` reconstructs from a managed dataset `Path`
+  or explicit logical-name bindings to Arrow tables and/or `FileSourceSpec`s.
+- `reconstruct_to(source, prepared, output, packaging="standalone")` publishes
+  native XML/JSON through the selected binding. `packaging="managed"` includes
+  a completion manifest alongside the native `document` payload.
+
+`OutputTarget(root: Path, name, namespace=None, completion="atomic", replace=False)`
+resolves to `root / namespace / name`. Namespace is optional; it does not alter
+logical table names or enable replacement. Names are single path components;
+namespaces must remain within the root without `.` or `..` components.
+`ExecutionResult` contains the published `path`, `kind` and immutable `row_counts`;
+native document results have no output tables and therefore empty counts.
+
+The existing `decompose`/`reconstruct` row APIs retain their signatures. One
+document-scoped session owns their traversal, casts, keys and finalized rows.
+Writers flush synchronously with at most `buffer_rows` pending rows per table.
+This does not make native-object decomposition or reconstruction bounded-memory:
+the full native value/current mapped record may already be materialized.
+Declared source-key identity tracking grows with document cardinality; generated
+keys use a counter. Generated keys are opaque identities, not stable identifiers
+between different traversal schedules.
+
+### Typed input
+
+Files-based reads require `[files]`. In-memory Arrow operations and local output
+writers do not import that optional integration. Explicit files require no
+StructureMap manifest. Their physical column names/order/types must match the
+prepared schemas; incompatible data is not silently cast. Arrow carrier
+nullability and unrelated metadata do not replace the mapping's own checks.
+Parquet inspection and reading use Mountainash Files; IPC uses its random-access
+stream acquisition and PyArrow's IPC file reader.
+
+Each `FileSourceSpec` must identify one concrete source: no unresolved templates,
+globs, archive selectors or `on_missing="skip"`. Resolve those selections first.
+Inspection/read cardinality and actual schemas are checked; this does not
+establish source immutability between reads. Unsupported random-access transforms
+fail rather than triggering a buffering fallback.
+
+### Publication and failure
+
+Destination preflight runs before reading input. Existing output requires explicit
+replacement permission; managed output may replace only an empty directory,
+never an existing nonempty result. Standalone output may replace a regular file.
+No implicit renaming, backup swap or deletion of prior successful results occurs.
+
+Output is staged beside its destination. Managed table results contain
+`manifest.json` and ordinal paths such as `tables/0000.parquet`; manifest entries
+retain the logical names verbatim. Manifest version 1 records `status`, `kind`
+and table `{name, path, rows, format}` entries, or `document: {path}`.
+Writers close before the complete manifest and final rename. This is local staged
+publication, not crash durability or concurrent-writer isolation.
+
+On failure, `atomic` attempts staging removal; `keep_partial` retains diagnostic
+files with failed metadata and successfully written row counts. Secondary cleanup
+or metadata errors are attached to the original failure. Reserved
+`.structuremap-staging-` directories cannot be read as completed managed inputs,
+even if failure metadata could not be written. Explicit file bindings can inspect
+retained data. A standalone publication followed by cleanup failure reports the
+already published target and leftover staging; it does not roll back the file.
+
+Run `hatch run test:python examples/execution_roundtrip.py` for independently
+authored Parquet → native XML → managed Parquet/IPC → fresh reconstruction, plus
+both native output packages.
 
 ## Development
 

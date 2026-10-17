@@ -28,12 +28,12 @@ def install(
     environment = (
         f"pydantic-{pydantic_constraint.replace('=', '').replace('<', '').replace('>', '')}-venv"
         if pydantic_constraint
-        else ("xml-venv" if extra else "base-venv")
+        else ("xml-files-venv" if extra else "base-venv")
     )
     venv = temp / environment
     run([sys.executable, "-m", "venv", str(venv)], cwd=temp, env=CLEAN_ENV)
     python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    requirement = f"{wheel}[xml]" if extra else str(wheel)
+    requirement = f"{wheel}[xml,files]" if extra else str(wheel)
     requirements = [requirement]
     if pydantic_constraint:
         requirements.append(f"pydantic{pydantic_constraint}")
@@ -91,9 +91,15 @@ def main() -> None:
         shutil.copy2(support / "external.py", fixture / "wheel_external.py")
         shutil.copy2(support / "models.py", fixture / "wheel_models.py")
         shutil.copy2(support / "runner.py", fixture / "runner.py")
+        shutil.copy2(support / "execution_cases.py", fixture / "execution_cases.py")
 
         xml_python = install(built[0], temp, extra=True)
-        execute_smoke(xml_python, fixture, temp, ("independent", "write", "read", "invalid", "pydantic", "authoring-persist", "authoring-independent"))
+        execute_smoke(xml_python, fixture, temp, (
+            "independent", "write", "read", "invalid", "pydantic",
+            "authoring-persist", "authoring-independent",
+            "execution-write-parquet", "execution-read-parquet",
+            "execution-write-arrow", "execution-read-arrow",
+        ))
         base_python = install(built[0], temp, extra=False)
         execute_smoke(base_python, fixture, temp, ("base", "missing-xml", "pydantic", "authoring-independent"))
         pydantic_python = install(

@@ -40,3 +40,28 @@ class DateParts:
         if not isinstance(shape, Scalar) or shape.type != "date" or names != ["year", "month", "day"]:
             raise StructureMapError("invalid_component", "DateParts requires date and year/month/day columns", path=context.path)
         context.value(codec=_DatePartsCodec())
+
+
+class _DatePartsEncoder:
+    fields = _DatePartsCodec.fields
+    encode = _DatePartsCodec.encode
+
+
+class _DatePartsDecoder:
+    fields = _DatePartsCodec.fields
+    check = _DatePartsCodec.check
+    decode = _DatePartsCodec.decode
+
+
+class DatePartsEncoder(DateParts):
+    directions = frozenset({"decompose"})
+
+    def prepare(self, use: MappingUse, context: PreparationContext) -> None:
+        context.value(codec=_DatePartsEncoder())
+
+
+class DatePartsDecoder(DateParts):
+    directions = frozenset({"reconstruct"})
+
+    def prepare(self, use: MappingUse, context: PreparationContext) -> None:
+        context.value(codec=_DatePartsDecoder())

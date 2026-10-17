@@ -366,6 +366,12 @@ def main(mode: str) -> None:
     if mode in {"independent", "write", "read", "invalid"}:
         load_xml_types()
     installed_path()
+    if mode.startswith("execution-"):
+        from execution_cases import run
+
+        _, operation, format = mode.split("-")
+        run(operation, format)
+        return
     if mode == "authoring-persist":
         _authoring_persist()
         _persist_roles()
@@ -448,10 +454,11 @@ def main(mode: str) -> None:
             structure=StructureSpec.model_validate(data["artifacts"]["declaration"]),
             native_types=native.native_types, binding=native.binding,
         )
-        prepared = prepare(derived, mapping)
-        for name, serialized in data["artifacts"]["typespecs"].items():
-            restored = TypeSpec.from_frictionless(serialized)
-            assert restored.to_frictionless() == prepared.tables[name].typespec.to_frictionless()
+        relations = {
+            name: TypeSpec.from_frictionless(serialized)
+            for name, serialized in data["artifacts"]["typespecs"].items()
+        }
+        prepared = prepare(derived, mapping, relations=relations)
         tables = data["tables"]
         rebuilt = reconstruct(tables, prepared)
         _assert_document(rebuilt)
@@ -486,8 +493,31 @@ def main(mode: str) -> None:
             "root": [{"_sm_key": "r"}],
             "entries": [{"_sm_key": "e", "_sm_parent": "r", "_sm_position": 0, "label": "base-only"}],
         }
-        assert reconstruct(supplied, plain) == BaseLedger([BaseEntry("base-only")])
-        print("Base-only dataclass execution passed")
+        from mountainash_structuremap.execution import (
+            OutputTarget,
+            decompose_arrow,
+            decompose_to,
+            reconstruct_from,
+        )
+
+        expected = BaseLedger([BaseEntry("base-only")])
+        assert reconstruct(supplied, plain) == expected
+        assert reconstruct_from(decompose_arrow(expected, plain), plain) == expected
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory(prefix="base-output-") as directory:
+            output = decompose_to(
+                expected, plain, OutputTarget(Path(directory), "ledger"),
+            )
+            try:
+                reconstruct_from(output.path, plain)
+            except StructureMapError as error:
+                assert error.code == "unavailable_capability", error
+                assert "mountainash-structuremap[files]" in error.remedy
+                assert isinstance(error.__cause__, ModuleNotFoundError)
+            else:
+                raise AssertionError("managed file input unexpectedly succeeded without Files")
+        print("Base-only execution imported, Arrow roundtrip passed, managed input requests [files]")
     elif mode == "missing-xml":
         try:
             derive(Note)

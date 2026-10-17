@@ -10,6 +10,8 @@
 - Add bidirectional local execution APIs with namespace-aware destination preflight, standalone/managed native output, Atomic/Keep partial staging, and primary-error-preserving cleanup.
 - Add incremental XML decomposition through native xsdata parsing and the shared session, with exact member/QName ancestry, wrapped/nested records, nullable choices and scopes, retained headers, and chunk-safe mixed fragments.
 - Preflight incremental ancestor key readiness; preserve bounded writer batches and complete records without buffering the selected collection or constructing partial ancestors.
+- Qualify installed Parquet/IPC execution with separate writer/readers, independent files, directional codecs, empty/all-null tables, keys/roles/alternatives, incremental XML and native XML/JSON output; retain base-only and minimum/current Pydantic coverage.
+- Scope CI read-only dependency access to the five pinned repositories and run the real execution example in hosted source qualification.
 - Add canonical JSON/safe-YAML mapping and structure authoring, generated JSON Schemas, namespace assembly and a thin snapshotting fluent builder.
 - Retain explicit-null override semantics and Mountainash Frictionless relation descriptors in portable bundles; reject duplicate keys, executable YAML tags, non-JSON values and unknown envelope fields without importing native bindings.
 - Exercise portable authoring through independently declared schemas and shared-role rows in the composable mapping example.

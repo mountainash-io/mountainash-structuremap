@@ -560,9 +560,8 @@ Presence preservation, EAV alternatives, Widen/Combined shared projections and
 custom cast implementations remain unavailable. Preparation refuses unavailable
 strategies rather than weakening them. Native-binding limits are described above.
 
-Installed-wheel/hosted qualification of the new execution surface remains a
-separate Plan 5 checkpoint. Reconstruction is in-memory; incremental JSON and
-incremental reconstruction are unavailable.
+Reconstruction remains in-memory. Incremental JSON and incremental reconstruction
+are unavailable.
 
 The former namespace blocker in
 [issue #5](https://github.com/mountainash-io/mountainash-structuremap/issues/5)
@@ -715,6 +714,7 @@ hatch run test:python examples/dataclass_roundtrip.py
 hatch run test:python examples/xml_roundtrip.py
 hatch run test:python examples/pydantic_roundtrip.py
 hatch run test:python examples/composable_mapping.py
+hatch run test:python examples/execution_roundtrip.py
 hatch run ruff:check
 hatch run mypy:check
 hatch build
@@ -726,29 +726,37 @@ a fresh preparation. No central documentation checkout is needed to build or
 run this package. Product work uses feature branches targeting protected
 `develop`; releases go through a release branch to `main`.
 
-The wheel smoke builds a new wheel and installs `[xml]` and base-only packages in
-separate temporary environments, checking dependencies with `pip check`. Both run
-Pydantic reconstruction from independent renamed/ordered rows, native JSON
-round-trips and constrained-input rejection. An additional base-only environment
-installs `pydantic==2.11.0` and runs the same Pydantic and dataclass scenarios.
-Every environment reports its actual installed versions.
-The XML run reconstructs independently authored Split, recursive and fragment
-tables. Separate isolated writer/reader processes transfer portable declarations,
-mapping, TypeSpecs and actual Decimal/date/time/datetime table carriers.
-Assertions distinguish absent offsets from explicit UTC. Base-only execution
-proves dataclass support and actionable detected/explicit missing-XML errors.
-Every environment also loads retained mapping JSON and independently declared
-Frictionless schemas in a fresh reader, explicitly supplies an application-owned
-date component outside the package, and reconstructs independent tuple/Literal/
-Decimal/date and shared-role rows. Duplicate values, gapped positions, empty
-collections and all-null date cells are checked separately from the emitted-row
-transport control.
-All runs use the installed package outside the checkout; only copied application
-fixtures are added to the import path. Temporary environments and transport
+The wheel smoke builds a new wheel and installs `[xml,files]` and base-only
+packages in separate temporary environments, checking dependencies with
+`pip check`. Current Pydantic and the minimum `pydantic==2.11.0` retain native
+JSON, independent-row and constrained-input coverage. Base-only execution
+imports the execution API, performs a real Arrow round trip, writes managed
+Parquet, and proves that reading it requests the missing `[files]` extra.
+Detected/explicit missing-XML guidance is checked separately.
+
+Separate isolated writer/reader processes qualify both Parquet and IPC through
+nine cases per format: XML Split/recursive/fragments and temporal companions;
+external directional multi-column codecs with populated, empty and all-null
+values; shared roles; composite ancestor keys; Prefixed alternatives;
+Shared/Exact alternatives; and Pydantic models. Readers consume retained
+declarations, mapping and schemas with explicitly supplied application classes,
+and reconstruct both managed results and independently authored files.
+
+The installed XML path also streams a native document into each storage format
+and reconstructs standalone and managed XML in a fresh process. Assertions cover
+exact Decimal values, temporal offset presence, namespaces, order and mixed
+text/tails. Pydantic storage reconstructs native JSON with independently checked
+aliases. No prepared objects or decomposition caches cross process boundaries.
+
+All runs use `python -I` and the installed package outside the checkout; only
+copied application fixtures are added to the import path. No source overlay or
+central documentation checkout is used. Temporary environments and transport
 files are removed afterward.
 
 CI runs `foundation-tests`, `foundation-wheel`, `foundation-lint` and
 `foundation-types`. Source, wheel and CI qualification use the same Mountainash
 revision. Private dependency fetches use the organization secrets `CI_APP_ID`
 and `CI_APP_PRIVATE_KEY`; the app must have read-only contents access to
-`mountainash-io/mountainash`. No central documentation checkout is required.
+`mountainash`, `mountainash-files`, `mountainash-transport`,
+`mountainash-auth-client` and `mountainash-settings` in `mountainash-io`—the exact
+private dependency chain declared in `pyproject.toml`.

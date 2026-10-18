@@ -1,6 +1,51 @@
 # Mountainash StructureMap
 
-Transform native Python dataclass, Pydantic BaseModel and xsdata XML models into typed in-memory tables and reconstruct them independently.
+Map hierarchical documents into typed relational data for querying, and map
+relational data back into structured documents.
+
+StructureMap connects native Python dataclass, Pydantic BaseModel and xsdata XML
+models with typed table representations. The mapping defines how relationships,
+ordering and alternatives are represented. DataFrame and database libraries own
+querying and persistence; native codecs own document parsing and serialization.
+
+## Two directions
+
+- **Document to tables:** You have an XML document and want its contents in tables
+  or DataFrames for relational queries. Native bindings interpret the document;
+  StructureMap decomposes its hierarchy into typed tables. Use a DataFrame or
+  database library to query the results.
+- **Tables to document:** You have relational data and need a structured document.
+  Supply tables that conform to the mapping; StructureMap reconstructs the native
+  hierarchy, and the native codec serializes it. The tables need not have
+  originated from StructureMap.
+
+For multiple documents, apply the mapping to each document. File discovery,
+orchestration, cross-document identity and aggregation are separate concerns;
+mapping each document does not define how their datasets should be combined.
+
+## StructureMap and ORMs
+
+An ORM provides a database-facing workflow for querying and persisting entities.
+StructureMap is not a database access system: it does not establish database
+connections, issue database queries or manage persistent entity sessions.
+Use it because data needs a different structure, not a database connection.
+
+Its file-oriented execution APIs read and publish supported table/document
+artifacts through storage and native codec integrations. They do not provide a
+database connection or query layer.
+
+The hierarchy supplies structural meaning, while a database is one possible
+physical realization of the relational representation—not the foundation of the
+mapping. In-memory tables, Arrow, Parquet and IPC serve that representation without
+requiring a database. Independently supplied conforming tables can reconstruct
+native values without the original object graph.
+
+Projected rows represent structural occurrences, not necessarily independently
+managed entities. Shared entity resolution, change tracking and database
+transactions are separate responsibilities. StructureMap and an ORM can complement
+each other through an explicitly defined integration; neither is a reduced version
+of the other. Preservation follows the selected mapping and native capabilities,
+including their normalization rules, rather than a universal lossless guarantee.
 
 ## Example
 

@@ -2,6 +2,25 @@
 
 Transform native Python dataclass, Pydantic BaseModel and xsdata XML models into typed in-memory tables and reconstruct them independently.
 
+## StructureMap and ORMs
+
+An ORM abstracts database-backed entities, queries and persistence. StructureMap
+instead maps native structured values to and from typed relational representations;
+native bindings connect those values to hierarchical document formats.
+
+The hierarchy supplies structural meaning, while a database is one possible
+physical realization of the relational representation—not the foundation of the
+mapping. In-memory tables, Arrow, Parquet and IPC serve that representation without
+requiring a database. Independently supplied conforming tables can reconstruct
+native values without the original object graph.
+
+Projected rows represent structural occurrences, not necessarily independently
+managed entities. Shared entity resolution, change tracking and database
+transactions are separate responsibilities. StructureMap and an ORM can complement
+each other through an explicitly defined integration; neither is a reduced version
+of the other. Preservation follows the selected mapping and native capabilities,
+including their normalization rules, rather than a universal lossless guarantee.
+
 ## Example
 
 ```python

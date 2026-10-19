@@ -738,7 +738,7 @@ Requires Python 3.12+, Git and Hatch 1.14+; Hatch manages its configured uv
 installer. The package requires Pydantic 2.11+ for native name-only validation.
 
 Mountainash is sourced directly from GitHub at a pinned commit:
-`1c60b9877c012638a66d29f52858919e40ca6243` (the composable-field-declarations
+`f64ed5d88a961eec71cf69b150dd4cb7176d50bc` (the composable-field-declarations
 cutover, pending its merge to Mountainash `develop`). The dependency in `pyproject.toml`
 is the single pin used by source environments, wheel installation and CI.
 No package-index publication or sibling checkout is required.

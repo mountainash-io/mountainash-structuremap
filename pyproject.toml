@@ -9,7 +9,7 @@ description = "Declarative native-model and table transformations"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "mountainash @ git+https://github.com/mountainash-io/mountainash.git@1c60b9877c012638a66d29f52858919e40ca6243",
+  "mountainash @ git+https://github.com/mountainash-io/mountainash.git@f64ed5d88a961eec71cf69b150dd4cb7176d50bc",
   "pydantic>=2.11,<3",
   "PyYAML>=6,<7",
   "pyarrow>=16",

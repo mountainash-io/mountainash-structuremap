@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased
-- **Breaking:** migrate codecs and table layouts to ordered name-to-FieldSpec mappings, preserving shared declarations through projections and reconstruction. Custom codecs must return `Mapping[str, FieldSpec]` instead of tuples of named `FieldSpec`. Requires Mountainash `85a90689f16084919cf13afc0d3ca10852843aba` (composable field declarations; pin to be moved to the merged Mountainash `develop` commit).
+- **Breaking:** migrate codecs and table layouts to ordered name-to-FieldSpec mappings, preserving shared declarations through projections and reconstruction. Custom codecs must return `Mapping[str, FieldSpec]` instead of tuples of named `FieldSpec`. Requires Mountainash `1c60b9877c012638a66d29f52858919e40ca6243` (composable field declarations; pin to be moved to the merged Mountainash `develop` commit).
 
 - Adopt Mountainash `c1e8da53822af9b61079a34f00c811ce5d53c733` canonical dtype fields, preserving numeric widths through prepared schemas, descriptor reload and Arrow values.
 - Honor explicit native override precedence in schema reconciliation and inverse casts.

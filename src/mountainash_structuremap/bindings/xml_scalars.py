@@ -51,7 +51,7 @@ class XmlLexicalPrimitiveCodec:
     def __init__(self, family: Literal["bool", "float"], column: str, path: str):
         self.family, self.column, self.path = family, column, path
         self.primitive = PrimitiveCodec(family, column, path)
-        self.fields: tuple[FieldSpec, ...] = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+        self.fields = {column: FieldSpec(type=UniversalType.STRING, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         self.primitive.encode(value)
@@ -93,7 +93,7 @@ class XmlLexicalPrimitiveCodec:
 
 
 class XmlBinaryCodec:
-    fields: tuple[FieldSpec, ...]
+    fields: dict[str, FieldSpec]
 
     def __init__(self, native_type: type | None, column: str, path: str, format: str | None):
         self.native_type = native_type or bytes
@@ -132,7 +132,7 @@ class XmlBinaryCodec:
                 remedy="Align format with the declared native binary class",
             )
         self.column, self.path = column, path
-        self.fields = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+        self.fields = {column: FieldSpec(type=UniversalType.STRING, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         if value is None:
@@ -190,7 +190,7 @@ class XmlBinaryCodec:
 
 
 class XmlQNameCodec:
-    fields: tuple[FieldSpec, ...]
+    fields: dict[str, FieldSpec]
 
     def __init__(self, native_type: type | None, column: str, path: str):
         self.native_type = native_type or QName
@@ -203,7 +203,7 @@ class XmlQNameCodec:
                 remedy="Use xml.etree.ElementTree.QName",
             )
         self.column, self.path = column, path
-        self.fields = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+        self.fields = {column: FieldSpec(type=UniversalType.STRING, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
 
@@ -259,7 +259,7 @@ class XmlQNameCodec:
 
 
 class XmlBoundedIntegerCodec:
-    fields: tuple[FieldSpec, ...]
+    fields: dict[str, FieldSpec]
 
     def __init__(self, facets: NumericFacets, column: str, path: str):
         self.column, self.path = column, path
@@ -274,7 +274,7 @@ class XmlBoundedIntegerCodec:
                 remedy="Declare signed-i64-proving bounds or use lexical value_space",
             )
         self.bounds = bounds
-        self.fields = (FieldSpec(name=column, type=UniversalType.INTEGER, missing_values=[]),)
+        self.fields = {column: FieldSpec(type=UniversalType.INTEGER, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         if type(value) is not int:
@@ -406,7 +406,7 @@ class XmlIntegerCodec:
         self.column = column
         self.path = path
         self.facets = facets
-        self.fields: tuple[FieldSpec, ...] = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+        self.fields: dict[str, FieldSpec] = {column: FieldSpec(type=UniversalType.STRING, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         if not isinstance(value, int) or isinstance(value, bool):
@@ -488,8 +488,7 @@ class XmlIntegerCodec:
 
 
 class XmlEnumCodec:
-    fields: tuple[FieldSpec, ...]
-
+    fields: dict[str, FieldSpec]
     def __init__(
         self,
         enum_type: type[Enum],

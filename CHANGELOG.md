@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Migrate codecs and table layouts to ordered name-to-FieldSpec mappings, preserving shared declarations through projections and reconstruction.
 
 - Adopt Mountainash `c1e8da53822af9b61079a34f00c811ce5d53c733` canonical dtype fields, preserving numeric widths through prepared schemas, descriptor reload and Arrow values.
 - Honor explicit native override precedence in schema reconciliation and inverse casts.

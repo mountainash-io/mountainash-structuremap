@@ -27,7 +27,7 @@ class AddressColumns:
 
 class DatePartsCodec:
     def __init__(self, names: tuple[str, ...]):
-        self.fields = tuple(FieldSpec(name=name, type=UniversalType.INTEGER, missing_values=[]) for name in names)
+        self.fields = {name: FieldSpec(type=UniversalType.INTEGER, missing_values=[]) for name in names}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         if type(value) is not date:

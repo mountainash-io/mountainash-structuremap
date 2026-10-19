@@ -23,12 +23,12 @@ class Batch:
 
 def source_layouts():
     relations = {
-        "batches": TypeSpec(fields=[FieldSpec(name="id", type=U.INTEGER, missing_values=[])], missing_values=[]),
-        "lines": TypeSpec(fields=[
-            FieldSpec(name="parent_id", type=U.INTEGER, missing_values=[]),
-            FieldSpec(name="line_no", type=U.INTEGER, missing_values=[]),
-            FieldSpec(name="label", type=U.STRING, missing_values=[]),
-        ], missing_values=[]),
+        "batches": TypeSpec(fields={"id": FieldSpec(type=U.INTEGER, missing_values=[])}, missing_values=[]),
+        "lines": TypeSpec(fields={
+            "parent_id": FieldSpec(type=U.INTEGER, missing_values=[]),
+            "line_no": FieldSpec(type=U.INTEGER, missing_values=[]),
+            "label": FieldSpec(type=U.STRING, missing_values=[]),
+        }, missing_values=[]),
     }
     mapping = MappingSpec(
         use=MappingUse(component="core.record", config={"table": "batches"}),

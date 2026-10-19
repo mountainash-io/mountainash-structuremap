@@ -7,7 +7,7 @@ from mountainash.typespec.universal_types import UniversalType as U
 from mountainash_structuremap import StructureMapError, decompose, derive, prepare, reconstruct
 from mountainash_structuremap.codecs import Cell, CellLocation
 from mountainash_structuremap.components import PreparationContext
-from mountainash_structuremap.mapping import MappingSpec, MappingUse, RowLayout
+from mountainash_structuremap.mapping import MappingSpec, MappingUse, RowLayout, UseOverride
 
 
 @dataclass(frozen=True)
@@ -16,14 +16,14 @@ class Value:
 
 
 class EncodeOnlyCodec:
-    fields = (FieldSpec(name="amount", type=U.INTEGER, missing_values=[]),)
+    fields = {"amount": FieldSpec(type=U.INTEGER, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         return (value,)
 
 
 class DecodeOnlyCodec:
-    fields = (FieldSpec(name="amount", type=U.INTEGER, missing_values=[]),)
+    fields = {"amount": FieldSpec(type=U.INTEGER, missing_values=[])}
 
     def check(self, cells: tuple[Cell, ...], location: CellLocation) -> object:
         assert len(cells) == 1 and type(cells[0]) is int
@@ -76,12 +76,72 @@ def test_decode_only_component_needs_no_encode_method_and_rejects_decomposition_
 
 
 @dataclass(frozen=True)
+class SharedPair:
+    left: int
+    right: int
+
+
+_QUANTITY = FieldSpec(type=U.INTEGER, minimum=0, missing_values=[])
+
+
+class SharedQuantityCodec:
+    def __init__(self, column: str):
+        self.fields = {column: _QUANTITY}
+
+    def encode(self, value: object) -> tuple[Cell, ...]:
+        if type(value) is not int:
+            raise StructureMapError("native_type_mismatch", "Quantity requires an integer")
+        return (value,)
+
+    def check(self, cells: tuple[Cell, ...], location: CellLocation) -> object:
+        assert len(cells) == 1 and type(cells[0]) is int
+        return cells[0]
+
+    def decode(self, checked: object) -> object:
+        return checked
+
+
+class SharedQuantity:
+    identity = "test.shared-quantity"
+    directions = frozenset({"decompose", "reconstruct"})
+
+    def prepare(self, use: MappingUse, context: PreparationContext) -> None:
+        context.value(codec=SharedQuantityCodec(context.options.column or "quantity"))
+
+
+def test_shared_codec_definition_is_projected_under_two_names_and_reconstructed():
+    mapping_spec = MappingSpec(
+        use=MappingUse(component="core.record", config={"table": "values"}, children={
+            "left": MappingUse(component="test.shared-quantity"),
+            "right": MappingUse(component="test.shared-quantity"),
+        }),
+        overrides={
+            "left": UseOverride(column="left_value"),
+            "right": UseOverride(column="right_value"),
+        },
+    )
+    prepared = prepare(derive(SharedPair), mapping_spec, components=(SharedQuantity(),))
+
+    emitted = decompose(SharedPair(3, 8), prepared)
+    assert emitted["values"][0]["left_value"] == 3
+    assert emitted["values"][0]["right_value"] == 8
+    assert tuple(prepared.tables["values"].typespec.fields) == (
+        "_sm_key", "left_value", "right_value",
+    )
+    assert prepared.tables["values"].typespec.fields["left_value"].constraints.minimum == 0
+    assert prepared.tables["values"].typespec.fields["left_value"] is _QUANTITY
+    assert prepared.tables["values"].typespec.fields["right_value"] is _QUANTITY
+    assert prepared.tables["values"].typespec.fields["right_value"].constraints.minimum == 0
+    assert reconstruct(emitted, prepared) == SharedPair(3, 8)
+
+
+@dataclass(frozen=True)
 class MapRoot:
     values: dict[str, int]
 
 
 class PrefixedStringKeyCodec:
-    fields = (FieldSpec(name="wire_key", type=U.STRING, missing_values=[]),)
+    fields = {"wire_key": FieldSpec(type=U.STRING, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         assert type(value) is str
@@ -107,14 +167,14 @@ class PrefixedStringKeys:
 
 def prepared_custom_map():
     relations = {
-        "root": TypeSpec(fields=[FieldSpec(name="_sm_key", type=U.STRING, missing_values=[])], missing_values=[]),
-        "values": TypeSpec(fields=[
-            FieldSpec(name="_sm_key", type=U.STRING, missing_values=[]),
-            FieldSpec(name="_sm_parent", type=U.STRING, missing_values=[]),
-            FieldSpec(name="_sm_position", type=U.INTEGER, missing_values=[]),
-            FieldSpec(name="wire_key", type=U.STRING, missing_values=[]),
-            FieldSpec(name="value", type=U.INTEGER, missing_values=[]),
-        ], missing_values=[]),
+        "root": TypeSpec(fields={"_sm_key": FieldSpec(type=U.STRING, missing_values=[])}, missing_values=[]),
+        "values": TypeSpec(fields={
+            "_sm_key": FieldSpec(type=U.STRING, missing_values=[]),
+            "_sm_parent": FieldSpec(type=U.STRING, missing_values=[]),
+            "_sm_position": FieldSpec(type=U.INTEGER, missing_values=[]),
+            "wire_key": FieldSpec(type=U.STRING, missing_values=[]),
+            "value": FieldSpec(type=U.INTEGER, missing_values=[]),
+        }, missing_values=[]),
     }
     mapping_spec = MappingSpec(
         use=MappingUse(component="core.record", config={"table": "root"}, children={

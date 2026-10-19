@@ -382,22 +382,22 @@ def test_complete_records_finalize_nested_multicolumn_external_codecs():
         )
     )
     relations = {
-        "root": TypeSpec(fields=[FieldSpec(name="_sm_key", type=U.STRING, missing_values=[])], missing_values=[]),
+        "root": TypeSpec(fields={"_sm_key": FieldSpec(type=U.STRING, missing_values=[])}, missing_values=[]),
         "records__labels": TypeSpec(
-            fields=[
-                FieldSpec(name=name, type=kind, missing_values=[])
+            fields={
+                name: FieldSpec(type=kind, missing_values=[])
                 for name, kind in (
                     ("_sm_key", U.STRING),
                     ("_sm_parent", U.STRING),
                     ("_sm_position", U.INTEGER),
                     ("value", U.STRING),
                 )
-            ],
+            },
             missing_values=[],
         ),
         "records": TypeSpec(
-            fields=[
-                FieldSpec(name=name, type=kind, missing_values=[])
+            fields={
+                name: FieldSpec(type=kind, missing_values=[])
                 for name, kind in (
                     ("_sm_key", U.STRING),
                     ("_sm_parent", U.STRING),
@@ -406,7 +406,7 @@ def test_complete_records_finalize_nested_multicolumn_external_codecs():
                     ("month", U.INTEGER),
                     ("day", U.INTEGER),
                 )
-            ],
+            },
             missing_values=[],
         ),
     }

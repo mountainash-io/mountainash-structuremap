@@ -77,6 +77,20 @@ def test_type_cast_projects_string_values_to_integer_and_reconstructs_native_str
     assert table.column("id").to_pylist() == [1, 2]
 
 
+def test_builtin_cast_projects_column_rename_and_reconstructs_native_values():
+    prepared = prepare(
+        derive(Items),
+        MappingSpec(overrides={
+            "items": UseOverride(table="quantities"),
+            "items/id": UseOverride(column="left_quantity", cast=TypeCast(to="i64")),
+        }),
+    )
+    source = Items([Item("2", "first")])
+    rows = decompose(source, prepared)
+    assert rows["quantities"][0]["left_quantity"] == 2
+    assert reconstruct(rows, prepared) == Items([Item("2", "first")])
+
+
 @pytest.mark.parametrize(("target", "arrow_type", "values"), [
     ("i8", pa.int8(), ["-128", "127"]),
     ("i16", pa.int16(), ["-32768", "32767"]),
@@ -109,10 +123,7 @@ def test_explicit_schema_uses_native_override_for_physical_compatibility(declare
     mapping = _mapping(TypeCast(to="i8"))
     inferred = prepare(derive(Items), mapping)
     schemas = {name: table.typespec for name, table in inferred.tables.items()}
-    schemas["items"].fields = [
-        FieldSpec(name="id", dtype=declared, backend_type=override, missing_values=[]) if field.name == "id" else field
-        for field in schemas["items"].fields
-    ]
+    schemas["items"].fields["id"] = FieldSpec(dtype=declared, backend_type=override, missing_values=[])
     if not compatible:
         with pytest.raises(StructureMapError) as caught:
             prepare(derive(Items), mapping, relations=schemas)
@@ -128,10 +139,10 @@ def test_explicit_schema_uses_native_override_for_physical_compatibility(declare
 
 def test_inverse_projection_honors_native_override_before_canonical_dtype():
     source_field = FieldSpec(
-        name="amount", dtype=MountainashDtype.I8,
+        dtype=MountainashDtype.I8,
         backend_type=NativeDtype(value=pl.Int64, target=TypeTarget.POLARS), missing_values=[],
     )
-    projection = prepare_value_projection((source_field,), TypeCast(to="string"), path="amount")
+    projection = prepare_value_projection({"amount": source_field}, TypeCast(to="string"), path="amount")
     assert projection.apply([{"amount": "128"}], reverse=True) == [{"amount": 128}]
 
 

@@ -126,17 +126,17 @@ def test_bundle_preserves_decimal_and_missing_value_descriptor_details() -> None
     from mountainash import DecimalDtype
     from mountainash.typespec.spec import FieldSpec
 
-    descriptor = TypeSpec(fields=[
-        FieldSpec(name="amount", type=U.NUMBER, dtype=DecimalDtype(12, 2), missing_values=[""]),
-        FieldSpec(name="optional", type=U.STRING, missing_values=["", "N/A"]),
-        FieldSpec(name="text", type=U.STRING, missing_values=[]),
-    ], missing_values=[""])
+    descriptor = TypeSpec(fields={
+        "amount": FieldSpec(type=U.NUMBER, dtype=DecimalDtype(12, 2), missing_values=[""]),
+        "optional": FieldSpec(type=U.STRING, missing_values=["", "N/A"]),
+        "text": FieldSpec(type=U.STRING, missing_values=[]),
+    }, missing_values=[""])
     bundle = AuthoringBundle(structure=None, mapping=MappingSpec(), relations={"records": descriptor})
     for fmt in ("json", "yaml"):
         loaded = load_bundle(dump_bundle(bundle, format=fmt), format=fmt)
         assert loaded.relations["records"] == descriptor
-        assert loaded.relations["records"].fields[0].dtype == DecimalDtype(12, 2)
-        assert loaded.relations["records"].fields[0].missing_values == [""]
+        assert loaded.relations["records"].fields["amount"].dtype == DecimalDtype(12, 2)
+        assert loaded.relations["records"].fields["amount"].missing_values == ("",)
         assert loaded.relations["records"].missing_values == [""]
 
 def test_builder_snapshots_input_and_each_built_mapping() -> None:
@@ -222,11 +222,14 @@ structure:
         }),
     )
     relations = {
-        "root": TypeSpec(fields=[FieldSpec(name="_sm_key", type=U.STRING, missing_values=[])], missing_values=[]),
-        "addresses": TypeSpec(fields=[FieldSpec(name=name, type=kind, missing_values=[]) for name, kind in (
-            ("city", U.STRING), ("_sm_parent", U.STRING), ("_sm_position", U.INTEGER),
-            ("address_role", U.STRING), ("country", U.STRING),
-        )], missing_values=[]),
+        "root": TypeSpec(fields={"_sm_key": FieldSpec(type=U.STRING, missing_values=[])}, missing_values=[]),
+        "addresses": TypeSpec(fields={
+            name: FieldSpec(type=kind, missing_values=[])
+            for name, kind in (
+                ("city", U.STRING), ("_sm_parent", U.STRING), ("_sm_position", U.INTEGER),
+                ("address_role", U.STRING), ("country", U.STRING),
+            )
+        }, missing_values=[]),
     }
     rows = {
         "root": [{"_sm_key": "document"}],

@@ -61,7 +61,7 @@ class FragmentCodec:
         self.column = column
         self.path = path
         self.attributes = attributes
-        self.fields: tuple[FieldSpec, ...] = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+        self.fields = {column: FieldSpec(type=UniversalType.STRING, missing_values=[])}
         config = ParserConfig(fail_on_converter_warnings=True, fail_on_unknown_properties=True)
         self.preflight_parser = XmlParser(
             context=XmlContext(models_package=__name__), config=config, handler=XmlEventHandler,

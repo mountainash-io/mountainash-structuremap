@@ -553,8 +553,8 @@ class DecompositionSession:
         while pending:
             current = self.prepared.programs[pending.pop()]
             if isinstance(current, ScalarProgram):
-                for field in current.codec.fields:
-                    self.write_cell(row, field.name, None)
+                for name in current.codec.fields:
+                    self.write_cell(row, name, None)
             elif isinstance(current, RecordProgram):
                 pending.extend((child for _, child in reversed(current.members)))
             elif isinstance(current, TupleProgram):
@@ -751,8 +751,8 @@ class DecompositionSession:
             if isinstance(program, ScalarProgram):
                 values = _native_scalar(native_value, program)
                 codec = cast(EncodingCodec, program.codec)
-                for field, cell in zip(codec.fields, values, strict=True):
-                    self.write_cell(row, field.name, cell)
+                for (name, _), cell in zip(codec.fields.items(), values, strict=True):
+                    self.write_cell(row, name, cell)
                 if program.projection is not None:
                     self.projection_batches.setdefault(program_id, []).append(row)
                 continue

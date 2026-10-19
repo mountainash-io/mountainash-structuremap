@@ -178,10 +178,10 @@ def _components(model: DerivedModel[object]) -> dict[str, int]:
 
 
 
-def _program_fields(program_id: int, programs: dict[int, ValueProgram]) -> list[FieldSpec]:
+def _program_fields(program_id: int, programs: dict[int, ValueProgram]) -> dict[str, FieldSpec]:
     program = programs[program_id]
     if isinstance(program, ScalarProgram):
-        return list(program.projection.projected_fields if program.projection is not None else program.codec.fields)
+        return dict(program.projection.projected_fields if program.projection is not None else program.codec.fields)
     fields: dict[str, FieldSpec] = {}
     shared = isinstance(program, VariantProgram) and program.layout == "shared"
     children: list[int] = []
@@ -191,43 +191,40 @@ def _program_fields(program_id: int, programs: dict[int, ValueProgram]) -> list[
         children = list(program.items)
     elif isinstance(program, VariantProgram) and not (program.repeated and program.layout == "split"):
         if not program.source_discriminator:
-            fields[program.discriminator_column] = FieldSpec(
-                name=program.discriminator_column, type=UniversalType.STRING, missing_values=[])
+            fields[program.discriminator_column] = FieldSpec(type=UniversalType.STRING, missing_values=[])
         if program.payload_null_column is not None:
-            fields[program.payload_null_column] = FieldSpec(
-                name=program.payload_null_column, type=UniversalType.BOOLEAN, missing_values=[])
+            fields[program.payload_null_column] = FieldSpec(type=UniversalType.BOOLEAN, missing_values=[])
         children = [branch.program for branch in program.alternatives]
     for child in children:
-        for field in _program_fields(child, programs):
-            if field.name in fields:
+        for name, field in _program_fields(child, programs).items():
+            if name in fields:
                 if not shared:
                     path = programs[child].path
                     pending = [child]
                     while pending:
                         source = programs[pending.pop()]
-                        if isinstance(source, ScalarProgram):
-                            if any(item.name == field.name for item in source.codec.fields):
-                                path = source.path
-                                break
-                        elif isinstance(source, RecordProgram):
+                        if isinstance(source, ScalarProgram) and name in source.codec.fields:
+                            path = source.path
+                            break
+                        if isinstance(source, RecordProgram):
                             pending.extend(item for _, item in reversed(source.members))
                         elif isinstance(source, TupleProgram):
                             pending.extend(reversed(source.items))
                         elif isinstance(source, VariantProgram):
                             pending.extend(item.program for item in reversed(source.alternatives))
                     raise StructureMapError(
-                        "column_collision", f"Column {field.name!r} has conflicting mapped sources",
-                        path=path, column=field.name,
+                        "column_collision", f"Column {name!r} has conflicting mapped sources",
+                        path=path, column=name,
                         remedy="Declare distinct columns or prefixes, or select Shared/Exact for alternatives",
                     )
-                if not same_physical_type(fields[field.name], field):
+                if not same_physical_type(fields[name], field):
                     raise StructureMapError(
-                        "incompatible_schema", f"Shared column {field.name!r} has incompatible projected types",
-                        path=programs[child].path, column=field.name,
+                        "incompatible_schema", f"Shared column {name!r} has incompatible projected types",
+                        path=programs[child].path, column=name,
                         remedy="Declare compatible physical types with explicit casts or use Prefixed alternatives",
                     )
-            fields[field.name] = field
-    return list(fields.values())
+            fields[name] = field
+    return fields
 
 
 def prepare(
@@ -687,10 +684,8 @@ def prepare(
             target_table = table or self.table
             target_table = cast(str, tables.get(target_table, {}).get("physical", target_table))
             schema = relational_schemas.get(target_table) if relational_schemas is not None else None
-            if schema is not None:
-                for field in schema.fields:
-                    if field.name == column:
-                        return deepcopy(field)
+            if schema is not None and column in schema.fields:
+                return schema.fields[column]
             raise StructureMapError(
                 "missing_field", f"No declared field {target_table}.{column}", path=self.path, table=target_table,
                 column=column, remedy="Supply the required table and field in relations",
@@ -1641,7 +1636,7 @@ def prepare(
                     "invalid_discriminator", "Source discriminator values cannot be cast",
                     path=scalar.path, remedy="Remove this cast or select a recorded discriminator",
                 )
-            source_branches.append(replace(branch, source_column=scalar.codec.fields[0].name))
+            source_branches.append(replace(branch, source_column=next(iter(scalar.codec.fields))))
         programs[variant_id] = replace(
             variant, alternatives=tuple(source_branches),
             discriminator_column=cast(str, source_branches[0].source_column),
@@ -1658,8 +1653,13 @@ def prepare(
             key_shape, native_type=str, format=None, column=cast(str, layout.map_key),
             policy=None, path=cast(str, descriptor["path"]),
         )
-        if (len(codec.fields) != 1 or codec.fields[0].name != layout.map_key
-                or codec.fields[0].type != UniversalType.STRING):
+        if len(codec.fields) != 1:
+            raise StructureMapError(
+                "incompatible_schema", "Map key codecs require one declared STRING field",
+                table=name, remedy="Use a single-column STRING codec for map keys",
+            )
+        field_name, field = next(iter(codec.fields.items()))
+        if field_name != layout.map_key or field.type != UniversalType.STRING:
             raise StructureMapError(
                 "incompatible_schema", "Map key codecs require one declared STRING field",
                 table=name, remedy="Use the layout map_key column with a STRING codec",

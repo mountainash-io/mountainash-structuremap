@@ -327,8 +327,8 @@ def test_complete_record_multicolumn_codec_writes_independent_typed_cells(tmp_pa
     )
     relations = {
         "records": TypeSpec(
-            fields=[
-                FieldSpec(name=name, type=kind, missing_values=[])
+            fields={
+                name: FieldSpec(type=kind, missing_values=[])
                 for name, kind in (
                     ("_sm_key", U.STRING),
                     ("_sm_parent", U.STRING),
@@ -337,12 +337,12 @@ def test_complete_record_multicolumn_codec_writes_independent_typed_cells(tmp_pa
                     ("month", U.INTEGER),
                     ("day", U.INTEGER),
                 )
-            ],
+            },
             missing_values=[],
         )
     }
     relations["root"] = TypeSpec(
-        fields=[FieldSpec(name="_sm_key", type=U.STRING, missing_values=[])],
+        fields={"_sm_key": FieldSpec(type=U.STRING, missing_values=[])},
         missing_values=[],
     )
 

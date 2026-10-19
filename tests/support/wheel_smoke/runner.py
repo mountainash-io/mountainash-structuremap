@@ -98,9 +98,9 @@ def _authoring_persist() -> None:
         }),
     }))
     relations = {
-        name: TypeSpec(fields=[
-            FieldSpec(name=column, type=kind, missing_values=[]) for column, kind in fields
-        ], missing_values=[])
+        name: TypeSpec(fields={
+            column: FieldSpec(type=kind, missing_values=[]) for column, kind in fields
+        }, missing_values=[])
         for name, fields in {
             "root": [("_sm_key", U.STRING)],
             "items": [

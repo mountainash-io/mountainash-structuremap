@@ -137,7 +137,7 @@ def _period_kind(value: XmlPeriod) -> str:
 
 
 class XmlTemporalCodec:
-    fields: tuple[FieldSpec, ...]
+    fields: dict[str, FieldSpec]
 
     def __init__(
         self,
@@ -181,15 +181,16 @@ class XmlTemporalCodec:
             physical = {"datetime": UniversalType.DATETIME, "date": UniversalType.DATE, "time": UniversalType.TIME}[
                 family
             ]
-            primary = FieldSpec(
-                name=column,
-                type=physical,
-                missing_values=[],
-                backend_type={"datetime": "timestamp[us]", "time": "time64[us]"}.get(family),
-            )
-            self.fields = (primary, FieldSpec(name=self.offset_column, type=UniversalType.INTEGER, missing_values=[]))
+            self.fields = {
+                column: FieldSpec(
+                    type=physical,
+                    missing_values=[],
+                    backend_type={"datetime": "timestamp[us]", "time": "time64[us]"}.get(family),
+                ),
+                self.offset_column: FieldSpec(type=UniversalType.INTEGER, missing_values=[]),
+            }
         else:
-            self.fields = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+            self.fields = {column: FieldSpec(type=UniversalType.STRING, missing_values=[])}
 
     def _parse(self, text: str) -> XmlDateTime | XmlDate | XmlTime | XmlPeriod | XmlDuration:
         if self.family == "datetime":

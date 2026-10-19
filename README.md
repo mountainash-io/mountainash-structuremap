@@ -737,8 +737,9 @@ with buffer sizes 1 and 10,000, plus both native output packages.
 Requires Python 3.12+, Git and Hatch 1.14+; Hatch manages its configured uv
 installer. The package requires Pydantic 2.11+ for native name-only validation.
 
-Mountainash is sourced directly from GitHub at a pinned commit on `develop`:
-`c1e8da53822af9b61079a34f00c811ce5d53c733`. The dependency in `pyproject.toml`
+Mountainash is sourced directly from GitHub at a pinned commit:
+`dcf43a81a4f2ddebce2b0550f0a26b015f8290f7` (the composable-field-declarations
+cutover, pending its merge to Mountainash `develop`). The dependency in `pyproject.toml`
 is the single pin used by source environments, wheel installation and CI.
 No package-index publication or sibling checkout is required.
 

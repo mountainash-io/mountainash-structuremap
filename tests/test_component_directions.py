@@ -135,6 +135,57 @@ def test_shared_codec_definition_is_projected_under_two_names_and_reconstructed(
     assert reconstruct(emitted, prepared) == SharedPair(3, 8)
 
 
+_BULK_QUANTITY = _QUANTITY.variant(minimum=10)
+
+
+class BulkQuantityCodec(SharedQuantityCodec):
+    def __init__(self, column: str):
+        self.fields = {column: _BULK_QUANTITY}
+
+
+class BulkQuantity:
+    identity = "test.bulk-quantity"
+    directions = frozenset({"decompose", "reconstruct"})
+
+    def prepare(self, use: MappingUse, context: PreparationContext) -> None:
+        context.value(codec=BulkQuantityCodec(context.options.column or "quantity"))
+
+
+@dataclass(frozen=True)
+class OrderLine:
+    qty: int
+    bulk: int
+
+
+@dataclass(frozen=True)
+class Order:
+    lines: list[OrderLine]
+
+
+def test_shared_definition_and_variant_in_nested_collection_reconstruct():
+    mapping_spec = MappingSpec(
+        use=MappingUse(component="core.record", children={"lines": MappingUse(
+            component="core.sequence", children={"item": MappingUse(component="core.record", children={
+                "qty": MappingUse(component="test.shared-quantity"),
+                "bulk": MappingUse(component="test.bulk-quantity"),
+            })},
+        )}),
+        overrides={"lines/bulk": UseOverride(column="bulk_qty")},
+    )
+    prepared = prepare(derive(Order), mapping_spec, components=(SharedQuantity(), BulkQuantity()))
+    value = Order([OrderLine(3, 12), OrderLine(0, 10)])
+
+    emitted = decompose(value, prepared)
+    fields = prepared.tables["lines"].typespec.fields
+    assert tuple(fields) == ("_sm_key", "_sm_parent", "_sm_position", "quantity", "bulk_qty")
+    assert [(row["quantity"], row["bulk_qty"]) for row in emitted["lines"]] == [(3, 12), (0, 10)]
+    assert fields["quantity"] is _QUANTITY
+    assert fields["bulk_qty"] is _BULK_QUANTITY
+    assert (_QUANTITY.constraints.minimum, _BULK_QUANTITY.constraints.minimum) == (0, 10)
+    assert reconstruct(emitted, prepared) == value
+
+
+
 @dataclass(frozen=True)
 class MapRoot:
     values: dict[str, int]

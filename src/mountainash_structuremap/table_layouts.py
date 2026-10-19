@@ -32,9 +32,8 @@ def same_physical_type(left: FieldSpec, right: FieldSpec) -> bool:
     has_native_override = left.backend_type is not None or right.backend_type is not None
 
     def canonical(field: FieldSpec) -> object:
-        schema = TypeSpec(fields={"_": field})
         if has_native_override:
-            return to_arrow_schema(schema).field(0).type
+            return to_arrow_schema(TypeSpec(fields={"_": field})).field(0).type
         return resolve_field_canonical(field)
 
     def nested(field: FieldSpec) -> object:

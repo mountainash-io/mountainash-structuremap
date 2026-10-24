@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import pytest
-from mountainash.typespec.spec import FieldSpec, TypeSpec
+from mountainash.typespec.spec import FieldDefinition, TableSchema
 from mountainash.typespec.universal_types import UniversalType as U
 
 from mountainash_structuremap import StructureMapError, decompose, derive, prepare, reconstruct
@@ -23,12 +23,12 @@ class Batch:
 
 def source_layouts():
     relations = {
-        "batches": TypeSpec(fields=[FieldSpec(name="id", type=U.INTEGER, missing_values=[])], missing_values=[]),
-        "lines": TypeSpec(fields=[
-            FieldSpec(name="parent_id", type=U.INTEGER, missing_values=[]),
-            FieldSpec(name="line_no", type=U.INTEGER, missing_values=[]),
-            FieldSpec(name="label", type=U.STRING, missing_values=[]),
-        ], missing_values=[]),
+        "batches": TableSchema(fields={"id": FieldDefinition(type=U.INTEGER, missing_values=[])}, missing_values=[]),
+        "lines": TableSchema(fields={
+            "parent_id": FieldDefinition(type=U.INTEGER, missing_values=[]),
+            "line_no": FieldDefinition(type=U.INTEGER, missing_values=[]),
+            "label": FieldDefinition(type=U.STRING, missing_values=[]),
+        }, missing_values=[]),
     }
     mapping = MappingSpec(
         use=MappingUse(component="core.record", config={"table": "batches"}),

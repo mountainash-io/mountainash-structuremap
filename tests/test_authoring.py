@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import pytest
 from jsonschema import Draft202012Validator
-from mountainash.typespec.spec import FieldSpec, TypeSpec
+from mountainash.typespec.spec import FieldDefinition, TableSchema
 from mountainash.typespec.universal_types import UniversalType as U
 
 from mountainash_structuremap import (
@@ -124,19 +124,18 @@ def test_yaml_loader_rejects_tags_and_preserves_parser_cause(tmp_path) -> None:
 
 def test_bundle_preserves_decimal_and_missing_value_descriptor_details() -> None:
     from mountainash import DecimalDtype
-    from mountainash.typespec.spec import FieldSpec
 
-    descriptor = TypeSpec(fields=[
-        FieldSpec(name="amount", type=U.NUMBER, dtype=DecimalDtype(12, 2), missing_values=[""]),
-        FieldSpec(name="optional", type=U.STRING, missing_values=["", "N/A"]),
-        FieldSpec(name="text", type=U.STRING, missing_values=[]),
-    ], missing_values=[""])
+    descriptor = TableSchema(fields={
+        "amount": FieldDefinition(type=U.NUMBER, dtype=DecimalDtype(12, 2), missing_values=[""]),
+        "optional": FieldDefinition(type=U.STRING, missing_values=["", "N/A"]),
+        "text": FieldDefinition(type=U.STRING, missing_values=[]),
+    }, missing_values=[""])
     bundle = AuthoringBundle(structure=None, mapping=MappingSpec(), relations={"records": descriptor})
     for fmt in ("json", "yaml"):
         loaded = load_bundle(dump_bundle(bundle, format=fmt), format=fmt)
         assert loaded.relations["records"] == descriptor
-        assert loaded.relations["records"].fields[0].dtype == DecimalDtype(12, 2)
-        assert loaded.relations["records"].fields[0].missing_values == [""]
+        assert loaded.relations["records"].fields["amount"].dtype == DecimalDtype(12, 2)
+        assert loaded.relations["records"].fields["amount"].missing_values == ("",)
         assert loaded.relations["records"].missing_values == [""]
 
 def test_builder_snapshots_input_and_each_built_mapping() -> None:
@@ -222,11 +221,11 @@ structure:
         }),
     )
     relations = {
-        "root": TypeSpec(fields=[FieldSpec(name="_sm_key", type=U.STRING, missing_values=[])], missing_values=[]),
-        "addresses": TypeSpec(fields=[FieldSpec(name=name, type=kind, missing_values=[]) for name, kind in (
+        "root": TableSchema(fields={"_sm_key": FieldDefinition(type=U.STRING, missing_values=[])}, missing_values=[]),
+        "addresses": TableSchema(fields={name: FieldDefinition(type=kind, missing_values=[]) for name, kind in (
             ("city", U.STRING), ("_sm_parent", U.STRING), ("_sm_position", U.INTEGER),
             ("address_role", U.STRING), ("country", U.STRING),
-        )], missing_values=[]),
+        )}, missing_values=[]),
     }
     rows = {
         "root": [{"_sm_key": "document"}],
@@ -241,7 +240,7 @@ structure:
         bundle = load_bundle(dump_bundle(AuthoringBundle(document, mapping, relations), format="json"), format="json")
         plan = prepare(model, bundle.mapping, relations=bundle.relations)
         assert reconstruct(rows, plan) == expected
-        assert {name: table.typespec for name, table in plan.tables.items()} == relations
+        assert {name: table.table_schema for name, table in plan.tables.items()} == relations
         assert decompose(expected, plan) == {
             "root": [{"_sm_key": "r0"}],
             "addresses": [

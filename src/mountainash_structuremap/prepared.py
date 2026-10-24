@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Generic, Literal, Mapping, TypeVar
 
-from mountainash.typespec.spec import TypeSpec
+from mountainash.typespec.spec import TableSchema
 
 from mountainash_structuremap.bindings.contracts import CapabilityReport, NativeBinding, RecordAdapter, VariantAdapter
 from mountainash_structuremap.codecs import Cell, DecodingCodec, EncodingCodec
@@ -141,15 +141,15 @@ class TablePlan:
     parent_tables: tuple[str, ...]
     columns: tuple[str, ...]
     layout: RowLayout
-    _typespec: TypeSpec = field(repr=False, compare=False)
+    _table_schema: TableSchema = field(repr=False, compare=False)
     roles: Mapping[str | None, TableRole]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "roles", MappingProxyType(dict(self.roles)))
 
     @property
-    def typespec(self) -> TypeSpec:
-        return deepcopy(self._typespec)
+    def table_schema(self) -> TableSchema:
+        return deepcopy(self._table_schema)
 
 
 @dataclass(frozen=True)

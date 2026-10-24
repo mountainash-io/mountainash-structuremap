@@ -296,7 +296,7 @@ def test_complete_records_keep_inline_children_nested_collections_and_mixed_frag
 
 
 def test_complete_record_multicolumn_codec_writes_independent_typed_cells(tmp_path):
-    from mountainash.typespec.spec import FieldSpec, TypeSpec
+    from mountainash.typespec.spec import FieldDefinition, TableSchema
     from mountainash.typespec.universal_types import UniversalType as U
     from xsdata.models.datatype import XmlDate
 
@@ -326,9 +326,9 @@ def test_complete_record_multicolumn_codec_writes_independent_typed_cells(tmp_pa
         )
     )
     relations = {
-        "records": TypeSpec(
-            fields=[
-                FieldSpec(name=name, type=kind, missing_values=[])
+        "records": TableSchema(
+            fields={
+                name: FieldDefinition(type=kind, missing_values=[])
                 for name, kind in (
                     ("_sm_key", U.STRING),
                     ("_sm_parent", U.STRING),
@@ -337,12 +337,12 @@ def test_complete_record_multicolumn_codec_writes_independent_typed_cells(tmp_pa
                     ("month", U.INTEGER),
                     ("day", U.INTEGER),
                 )
-            ],
+            },
             missing_values=[],
         )
     }
-    relations["root"] = TypeSpec(
-        fields=[FieldSpec(name="_sm_key", type=U.STRING, missing_values=[])],
+    relations["root"] = TableSchema(
+        fields={"_sm_key": FieldDefinition(type=U.STRING, missing_values=[])},
         missing_values=[],
     )
 

@@ -6,7 +6,7 @@ from dataclasses import replace
 from typing import Callable, Literal, Mapping, cast
 
 from mountainash.typespec.converters import resolve_field_canonical, to_arrow_schema
-from mountainash.typespec.spec import FieldSpec, TypeSpec
+from mountainash.typespec.spec import FieldDefinition, TableSchema
 from mountainash.typespec.universal_types import UniversalType
 
 from mountainash_structuremap.codecs import DecodingCodec, EncodingCodec
@@ -27,16 +27,16 @@ from mountainash_structuremap.prepared import (
 )
 
 
-def same_physical_type(left: FieldSpec, right: FieldSpec) -> bool:
+def same_physical_type(column: str, left: FieldDefinition, right: FieldDefinition) -> bool:
     """Compare effective Mountainash storage types and structured field metadata."""
     has_native_override = left.backend_type is not None or right.backend_type is not None
 
-    def canonical(field: FieldSpec) -> object:
+    def canonical(field: FieldDefinition) -> object:
         if has_native_override:
-            return to_arrow_schema(TypeSpec(fields=[field])).field(0).type
+            return to_arrow_schema(TableSchema(fields={column: field})).field(0).type
         return resolve_field_canonical(field)
 
-    structured = ("item_type", "item_object_fields", "object_fields")
+    structured = ("item_type", "fields", "element", "dimensions")
     return (
         canonical(left), left.format,
         tuple((name, getattr(left, name, None)) for name in structured),
@@ -50,9 +50,9 @@ def finalize_tables(
     descriptors: dict[str, dict[str, object]],
     programs: dict[int, ValueProgram],
     mapping: MappingSpec,
-    schemas: Mapping[str, TypeSpec] | None,
+    schemas: Mapping[str, TableSchema] | None,
     *,
-    fields_for: Callable[[int], list[FieldSpec]],
+    fields_for: Callable[[int], Mapping[str, FieldDefinition]],
     map_codec_for: Callable[[dict[str, object], RowLayout, str], EncodingCodec | DecodingCodec | None],
 ) -> tuple[dict[str, TablePlan], dict[int, ValueProgram]]:
     """Reconcile finite mapped-use table contributions into physical table plans."""
@@ -69,8 +69,8 @@ def finalize_tables(
             seen.add(program_id)
             program = programs[program_id]
             if isinstance(program, ScalarProgram):
-                for field in program.codec.fields:
-                    found.setdefault(field.name, program.path)
+                for name in program.codec.fields:
+                    found.setdefault(name, program.path)
             elif isinstance(program, RecordProgram):
                 pending.extend(child for _, child in program.members)
             elif isinstance(program, TupleProgram):
@@ -139,45 +139,40 @@ def finalize_tables(
         )
 
     layouts: dict[str, RowLayout] = {}
-    table_fields: dict[str, dict[str, FieldSpec]] = {physical: {} for physical in by_physical}
-    source_fields: dict[str, dict[str, FieldSpec]] = {}
+    table_fields: dict[str, dict[str, FieldDefinition]] = {physical: {} for physical in by_physical}
+    source_fields: dict[str, dict[str, FieldDefinition]] = {}
     payload_roles: dict[str, dict[str, str]] = defaultdict(dict)
     payload_paths: dict[str, dict[str, str]] = defaultdict(dict)
     role_specs: dict[str, dict[str | None, tuple[str, dict[str, object]]]] = {}
 
-    def add_field(table: str, field: FieldSpec, *, overlap: bool = False) -> None:
+    def add_field(table: str, name: str, field: FieldDefinition, *, overlap: bool = False) -> None:
         fields = table_fields[table]
-        old = fields.get(field.name)
+        old = fields.get(name)
         if old is None:
-            fields[field.name] = deepcopy(field)
-        elif not same_physical_type(old, field):
+            fields[name] = deepcopy(field)
+        elif not same_physical_type(name, old, field):
             raise StructureMapError(
-                "incompatible_schema", f"Incompatible physical types for {table}.{field.name}",
-                path=payload_paths[table].get(field.name, ""), table=table, column=field.name,
+                "incompatible_schema", f"Incompatible physical types for {table}.{name}",
+                path=payload_paths[table].get(name, ""), table=table, column=name,
                 remedy="Declare matching physical types for all roles and relationship columns",
             )
         elif not overlap:
             raise StructureMapError(
-                "column_collision", f"Multiple mapped contributions use {field.name!r}",
-                path=payload_paths[table].get(field.name, ""), table=table, column=field.name,
+                "column_collision", f"Multiple mapped contributions use {name!r}",
+                path=payload_paths[table].get(name, ""), table=table, column=name,
                 remedy="Use distinct columns or an explicitly compatible metadata overlap",
             )
 
-    def renamed(field: FieldSpec, name: str) -> FieldSpec:
-        result = deepcopy(field)
-        result.name = name
-        return result
-
-    def add_payload(table: str, identity: str, field: FieldSpec) -> None:
-        old = table_fields[table].get(field.name)
-        previous = payload_roles[table].get(field.name)
+    def add_payload(table: str, identity: str, name: str, field: FieldDefinition) -> None:
+        old = table_fields[table].get(name)
+        previous = payload_roles[table].get(name)
         if old is None:
-            add_field(table, field)
-            payload_roles[table][field.name] = identity
+            add_field(table, name, field)
+            payload_roles[table][name] = identity
         elif previous is not None and previous != identity:
-            add_field(table, field, overlap=True)
+            add_field(table, name, field, overlap=True)
         else:
-            add_field(table, field)
+            add_field(table, name, field)
 
     for physical, members in by_physical.items():
         parent_ids = {
@@ -267,11 +262,11 @@ def finalize_tables(
                         remedy="Use the same role in SharedCollection and the mapped-use descriptor",
                     )
             raw_fields = fields_for(cast(int, descriptor["program"]))
-            source_fields[identity] = {field.name: deepcopy(field) for field in raw_fields}
+            source_fields[identity] = {name: deepcopy(field) for name, field in raw_fields.items()}
             for column, path in paths_for(cast(int, descriptor["program"])).items():
                 payload_paths[physical].setdefault(column, path)
-            for field in raw_fields:
-                add_payload(physical, identity, field)
+            for name, field in raw_fields.items():
+                add_payload(physical, identity, name, field)
         role_specs[physical] = role_map
 
     # Relationship metadata and codec fields are reconciled once per physical table.
@@ -333,7 +328,7 @@ def finalize_tables(
             if len(layout.key) != 1:
                 raise StructureMapError("invalid_layout", "Generated keys require one column", table=physical,
                                         remedy="Declare one generated key column or use a source composite key")
-            add_field(physical, FieldSpec(name=layout.key[0], type=UniversalType.STRING, missing_values=[]))
+            add_field(physical, layout.key[0], FieldDefinition(type=UniversalType.STRING, missing_values=[]))
         metadata_fields: list[tuple[str | None, UniversalType, str]] = [
             (layout.position, UniversalType.INTEGER, "position"),
             (layout.map_key, UniversalType.STRING, "map_key"),
@@ -365,7 +360,7 @@ def finalize_tables(
                 continue
             metadata_seen[column] = (datatype, semantic)
             add_field(
-                physical, FieldSpec(name=column, type=datatype, missing_values=[]),
+                physical, column, FieldDefinition(type=datatype, missing_values=[]),
                 overlap=physical in mapping.layouts and semantic == "position",
             )
 
@@ -411,8 +406,8 @@ def finalize_tables(
                 for ancestor in ancestor_ids
                 if column in source_fields.get(ancestor, {})
             ]
-            unique = {(physical_for[ancestor], role_for[ancestor], field.name)
-                      for ancestor, field in candidates}
+            unique = {(physical_for[ancestor], role_for[ancestor], column)
+                      for ancestor, _ in candidates}
             if len(unique) > 1:
                 choices = sorted(f"{table}[role={role!r}].{name}" for table, role, name in unique)
                 raise StructureMapError(
@@ -437,7 +432,7 @@ def finalize_tables(
                 if physical_for[source_identity] == source_table and role_for[source_identity] == source_role
                 and source_column in field_map
             )
-            add_field(physical, renamed(source_field, column), overlap=True)
+            add_field(physical, column, source_field, overlap=True)
         key_sources_by_identity[identity] = tuple(sources)
 
     # Resolve parent schema dependencies independently of descriptor visitation order.
@@ -466,7 +461,7 @@ def finalize_tables(
                     )
                 for parent_column, parent_key_column in zip(layout.parent, parent_layout.key, strict=True):
                     parent_field = table_fields[physical_for[parent]][parent_key_column]
-                    add_field(physical, renamed(parent_field, parent_column), overlap=True)
+                    add_field(physical, parent_column, parent_field, overlap=True)
             unresolved.remove(identity)
             progressed = True
         if not progressed:
@@ -509,13 +504,7 @@ def finalize_tables(
         fields = table_fields[physical]
         if schemas is not None:
             schema = schemas[physical]
-            supplied: dict[str, FieldSpec] = {}
-            for field in schema.fields:
-                if field.name in supplied:
-                    raise StructureMapError("incompatible_schema", f"Table {physical!r} has duplicate field names",
-                                            table=physical, column=field.name,
-                                            remedy="Declare each physical column exactly once")
-                supplied[field.name] = field
+            supplied = schema.fields
             if set(supplied) != set(fields):
                 raise StructureMapError(
                     "incompatible_schema",
@@ -523,7 +512,7 @@ def finalize_tables(
                     table=physical, remedy="Declare exactly the mapped payload and relationship columns",
                 )
             for column, field in fields.items():
-                if not same_physical_type(field, supplied[column]):
+                if not same_physical_type(column, field, supplied[column]):
                     raise StructureMapError("incompatible_schema", f"Physical type mismatch for {physical}.{column}",
                                             table=physical, column=column,
                                             remedy="Use a compatible declared physical type or an explicit mapping codec")
@@ -536,7 +525,7 @@ def finalize_tables(
             metadata.extend(cast(str | None, descriptor.get("payload_null_column")) for _, descriptor in members)
             ordered_columns = dict.fromkeys(column for column in metadata if column is not None)
             ordered_columns.update(dict.fromkeys(fields))
-            schema = TypeSpec(fields=[fields[column] for column in ordered_columns], missing_values=[])
+            schema = TableSchema(fields={column: fields[column] for column in ordered_columns}, missing_values=[])
 
         roles: dict[str | None, TableRole] = {}
         physical_parents = sorted({
@@ -554,8 +543,8 @@ def finalize_tables(
                 raise StructureMapError("invalid_layout", f"Map role {identity!r} has no map-key codec",
                                         path=cast(str, descriptor.get("path", "")), table=physical,
                                         remedy="Provide a map-key codec for the declared map_key column")
-            if codec is not None and (len(codec.fields) != 1 or codec.fields[0].name != layout.map_key
-                                      or codec.fields[0].type != UniversalType.STRING):
+            if codec is not None and (len(codec.fields) != 1 or next(iter(codec.fields)) != layout.map_key
+                                      or next(iter(codec.fields.values())).type != UniversalType.STRING):
                 raise StructureMapError("incompatible_schema", "Map key codecs require one declared STRING field",
                                         table=physical, remedy="Use the layout map_key column with a STRING codec")
             parent_roles = tuple(sorted(
@@ -574,7 +563,7 @@ def finalize_tables(
             )
         plans[physical] = TablePlan(
             name=physical, source_path=cast(str, members[0][1].get("path", "")),
-            parent_tables=tuple(physical_parents), columns=tuple(field.name for field in schema.fields),
-            layout=layout, _typespec=deepcopy(schema), roles=roles,
+            parent_tables=tuple(physical_parents), columns=tuple(schema.fields),
+            layout=layout, _table_schema=deepcopy(schema), roles=roles,
         )
     return plans, rewritten

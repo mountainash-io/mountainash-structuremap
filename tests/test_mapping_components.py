@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal
 
 import pytest
-from mountainash.typespec.spec import FieldSpec, TypeSpec
+from mountainash.typespec.spec import FieldDefinition, TableSchema
 from mountainash.typespec.universal_types import UniversalType as U
 
 from mountainash_structuremap import StructureMapError, decompose, derive, prepare, reconstruct
@@ -38,15 +38,15 @@ class Order:
 
 def order_case():
     schemas = {
-        "orders": TypeSpec(fields=[FieldSpec(name=n, type=t, missing_values=[]) for n, t in (
+        "orders": TableSchema(fields={n: FieldDefinition(type=t, missing_values=[]) for n, t in (
             ("order_id", U.INTEGER), ("home_city", U.STRING), ("home_country", U.STRING),
             ("work_city", U.STRING), ("work_country", U.STRING),
             ("year", U.INTEGER), ("month", U.INTEGER), ("day", U.INTEGER),
-        )], missing_values=[]),
-        "lines": TypeSpec(fields=[FieldSpec(name=n, type=t, missing_values=[]) for n, t in (
+        )}, missing_values=[]),
+        "lines": TableSchema(fields={n: FieldDefinition(type=t, missing_values=[]) for n, t in (
             ("order_id", U.INTEGER), ("line_no", U.INTEGER), ("country", U.STRING),
             ("amount", U.STRING), ("effective", U.DATE), ("source_date", U.STRING),
-        )], missing_values=[]),
+        )}, missing_values=[]),
     }
     mapping = MappingSpec(
         use=MappingUse(component="core.record", config={"table": "orders"}, children={
@@ -100,13 +100,14 @@ def test_empty_and_all_null_inputs_keep_independent_schema():
     expected = Order(42, Address("Sydney", "AU"), Address("Wellington", "NZ"), None, ())
     assert reconstruct(rows, p) == expected
     assert decompose(expected, p) == rows
-    assert p.tables["orders"].typespec.fields[-1].type == U.INTEGER
+    assert list(p.tables["orders"].table_schema.fields.values())[-1].type == U.INTEGER
 
 
 def test_preparation_isolates_caller_owned_schema():
     schemas, mapping, rows, expected = order_case()
     p = prepared_order(schemas, mapping)
-    schemas["orders"].fields[0].name = "changed"
+    fields = schemas["orders"].fields
+    fields["changed"] = fields.pop("order_id")
     assert reconstruct(rows, p) == expected
     assert p.tables["orders"].columns[0] == "order_id"
 
@@ -115,11 +116,13 @@ def test_preparation_isolates_caller_owned_schema():
 def test_incompatible_physical_schema_fails_before_data(change):
     schemas, mapping, _, _ = order_case()
     if change == "missing":
-        schemas["orders"].fields.pop()
+        schemas["orders"].fields.popitem()
     elif change == "wrong_type":
-        schemas["orders"].fields[-1].type = U.STRING
+        fields = schemas["orders"].fields
+        last = list(fields)[-1]
+        fields[last] = fields[last].variant(type=U.STRING)
     else:
-        schemas["orders"].fields.append(FieldSpec(name="unused", type=U.STRING))
+        schemas["orders"].fields["unused"] = FieldDefinition(type=U.STRING)
     with pytest.raises(StructureMapError) as caught:
         prepared_order(schemas, mapping)
     assert caught.value.remedy

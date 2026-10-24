@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import cast
 
 from mountainash import BaseExpressionAPI, MountainashError, col, relation
-from mountainash.core.dtypes import DecimalDtype, MountainashDtype, NativeDtype, parse_cast_target
+from mountainash.core.dtypes import CastTarget, DecimalDtype, MountainashDtype, parse_cast_target
 from mountainash.typespec.converters import resolve_field_canonical, to_polars_schema
-from mountainash.typespec.spec import FieldSpec, TypeSpec
+from mountainash.typespec.spec import FieldDefinition, TableSchema
 
 from mountainash_structuremap.codecs import Cell
 from mountainash_structuremap.errors import StructureMapError
@@ -19,34 +20,34 @@ from mountainash_structuremap.mapping import TypeCast
 class ValueProjection:
     """Prepared Mountainash casts for one scalar codec's owned fields."""
 
-    _source_fields: tuple[FieldSpec, ...]
-    _projected_fields: tuple[FieldSpec, ...]
+    _source_fields: Mapping[str, FieldDefinition]
+    _projected_fields: Mapping[str, FieldDefinition]
     forward: tuple[BaseExpressionAPI, ...]
     reverse: tuple[BaseExpressionAPI, ...]
     path: str
 
     def __init__(
         self,
-        source_fields: tuple[FieldSpec, ...],
-        projected_fields: tuple[FieldSpec, ...],
+        source_fields: Mapping[str, FieldDefinition],
+        projected_fields: Mapping[str, FieldDefinition],
         forward: tuple[BaseExpressionAPI, ...],
         reverse: tuple[BaseExpressionAPI, ...],
         *,
         path: str,
     ) -> None:
-        object.__setattr__(self, "_source_fields", tuple(deepcopy(source_fields)))
-        object.__setattr__(self, "_projected_fields", tuple(deepcopy(projected_fields)))
+        object.__setattr__(self, "_source_fields", deepcopy(dict(source_fields)))
+        object.__setattr__(self, "_projected_fields", deepcopy(dict(projected_fields)))
         object.__setattr__(self, "forward", forward)
         object.__setattr__(self, "reverse", reverse)
         object.__setattr__(self, "path", path)
 
     @property
-    def source_fields(self) -> tuple[FieldSpec, ...]:
-        return tuple(deepcopy(self._source_fields))
+    def source_fields(self) -> Mapping[str, FieldDefinition]:
+        return MappingProxyType(deepcopy(dict(self._source_fields)))
 
     @property
-    def projected_fields(self) -> tuple[FieldSpec, ...]:
-        return tuple(deepcopy(self._projected_fields))
+    def projected_fields(self) -> Mapping[str, FieldDefinition]:
+        return MappingProxyType(deepcopy(dict(self._projected_fields)))
 
     def apply(
         self,
@@ -60,12 +61,12 @@ class ValueProjection:
         fields = self._projected_fields if reverse else self._source_fields
         expressions = self.reverse if reverse else self.forward
         owned_rows = [
-            {field.name: row[field.name] for field in fields}
+            {name: row[name] for name in fields}
             for row in rows
         ]
         try:
             typed = relation(owned_rows).conform(
-                TypeSpec(fields=list(deepcopy(fields)), missing_values=[])
+                TableSchema(fields=deepcopy(dict(fields)), missing_values=[])
             )
             return cast(list[dict[str, Cell]], typed.select(*expressions).to_dicts())
         except Exception as exc:
@@ -78,26 +79,26 @@ class ValueProjection:
             ) from exc
 
 
-def _field_for_target(field: FieldSpec, target: MountainashDtype | DecimalDtype) -> FieldSpec:
-    return FieldSpec(name=field.name, dtype=target, missing_values=[])
+def _field_for_target(target: MountainashDtype | DecimalDtype) -> FieldDefinition:
+    return FieldDefinition(dtype=target, missing_values=[])
 
 
-def _reverse_target(field: FieldSpec, *, path: str) -> MountainashDtype | DecimalDtype | NativeDtype:
+def _reverse_target(name: str, field: FieldDefinition, *, path: str) -> CastTarget:
     if field.backend_type is not None:
-        return parse_cast_target(to_polars_schema(TypeSpec(fields=[field]))[field.name])
+        return parse_cast_target(to_polars_schema(TableSchema(fields={name: field}))[name])
     canonical = resolve_field_canonical(field)
     if isinstance(canonical, (MountainashDtype, DecimalDtype)):
         return canonical
     raise StructureMapError(
         "unavailable_cast",
-        f"Cannot compile a reverse cast for untyped field {field.name!r}",
+        f"Cannot compile a reverse cast for untyped field {name!r}",
         path=path,
         remedy="Declare a native scalar field with a Mountainash-resolvable type",
     )
 
 
 def prepare_value_projection(
-    fields: tuple[FieldSpec, ...],
+    fields: Mapping[str, FieldDefinition],
     cast: TypeCast,
     *,
     path: str,
@@ -120,7 +121,7 @@ def prepare_value_projection(
             remedy="Use a target accepted by Mountainash parse_cast_target",
         )
 
-    source_fields = tuple(deepcopy(fields))
+    source_fields = deepcopy(dict(fields))
     if not source_fields:
         raise StructureMapError(
             "invalid_cast",
@@ -129,17 +130,17 @@ def prepare_value_projection(
             remedy="Apply TypeCast to a scalar with declared codec fields",
         )
     try:
-        projected_fields = tuple(_field_for_target(field, target) for field in source_fields)
+        projected_fields = {name: _field_for_target(target) for name in source_fields}
         forward = tuple(
-            col(field.name).cast(cast.to, failure_behavior=cast.on_failure).alias(field.name)
-            for field in source_fields
+            col(name).cast(cast.to, failure_behavior=cast.on_failure).alias(name)
+            for name in source_fields
         )
         reverse = tuple(
-            col(field.name).cast(
-                _reverse_target(field, path=path),
+            col(name).cast(
+                _reverse_target(name, field, path=path),
                 failure_behavior=cast.on_failure,
-            ).alias(field.name)
-            for field in source_fields
+            ).alias(name)
+            for name, field in source_fields.items()
         )
     except StructureMapError:
         raise

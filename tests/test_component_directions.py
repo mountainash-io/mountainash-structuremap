@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import pytest
-from mountainash.typespec.spec import FieldSpec, TypeSpec
+from mountainash.typespec.spec import FieldDefinition, TableSchema
 from mountainash.typespec.universal_types import UniversalType as U
 
 from mountainash_structuremap import StructureMapError, decompose, derive, prepare, reconstruct
@@ -16,14 +16,14 @@ class Value:
 
 
 class EncodeOnlyCodec:
-    fields = (FieldSpec(name="amount", type=U.INTEGER, missing_values=[]),)
+    fields = {"amount": FieldDefinition(type=U.INTEGER, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         return (value,)
 
 
 class DecodeOnlyCodec:
-    fields = (FieldSpec(name="amount", type=U.INTEGER, missing_values=[]),)
+    fields = {"amount": FieldDefinition(type=U.INTEGER, missing_values=[])}
 
     def check(self, cells: tuple[Cell, ...], location: CellLocation) -> object:
         assert len(cells) == 1 and type(cells[0]) is int
@@ -81,7 +81,7 @@ class MapRoot:
 
 
 class PrefixedStringKeyCodec:
-    fields = (FieldSpec(name="wire_key", type=U.STRING, missing_values=[]),)
+    fields = {"wire_key": FieldDefinition(type=U.STRING, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         assert type(value) is str
@@ -107,14 +107,14 @@ class PrefixedStringKeys:
 
 def prepared_custom_map():
     relations = {
-        "root": TypeSpec(fields=[FieldSpec(name="_sm_key", type=U.STRING, missing_values=[])], missing_values=[]),
-        "values": TypeSpec(fields=[
-            FieldSpec(name="_sm_key", type=U.STRING, missing_values=[]),
-            FieldSpec(name="_sm_parent", type=U.STRING, missing_values=[]),
-            FieldSpec(name="_sm_position", type=U.INTEGER, missing_values=[]),
-            FieldSpec(name="wire_key", type=U.STRING, missing_values=[]),
-            FieldSpec(name="value", type=U.INTEGER, missing_values=[]),
-        ], missing_values=[]),
+        "root": TableSchema(fields={"_sm_key": FieldDefinition(type=U.STRING, missing_values=[])}, missing_values=[]),
+        "values": TableSchema(fields={
+            "_sm_key": FieldDefinition(type=U.STRING, missing_values=[]),
+            "_sm_parent": FieldDefinition(type=U.STRING, missing_values=[]),
+            "_sm_position": FieldDefinition(type=U.INTEGER, missing_values=[]),
+            "wire_key": FieldDefinition(type=U.STRING, missing_values=[]),
+            "value": FieldDefinition(type=U.INTEGER, missing_values=[]),
+        }, missing_values=[]),
     }
     mapping_spec = MappingSpec(
         use=MappingUse(component="core.record", config={"table": "root"}, children={

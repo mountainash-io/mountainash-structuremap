@@ -11,7 +11,7 @@ from xml.etree.ElementTree import fromstring
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mountainash.typespec.spec import FieldSpec, TypeSpec  # noqa: E402
+from mountainash.typespec.spec import FieldDefinition, TableSchema  # noqa: E402
 from mountainash.typespec.universal_types import UniversalType as U  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 from wheel_external import DateParts  # noqa: E402
@@ -51,7 +51,7 @@ def _portable_mapping() -> MappingSpec:
 
 def _authoring_types():
     return {
-        name: TypeSpec.from_frictionless(schema)
+        name: TableSchema.from_frictionless(schema)
         for name, schema in json.loads(Path("authoring-schema.json").read_text(encoding="utf-8")).items()
     }
 
@@ -98,9 +98,9 @@ def _authoring_persist() -> None:
         }),
     }))
     relations = {
-        name: TypeSpec(fields=[
-            FieldSpec(name=column, type=kind, missing_values=[]) for column, kind in fields
-        ], missing_values=[])
+        name: TableSchema(fields={
+            column: FieldDefinition(type=kind, missing_values=[]) for column, kind in fields
+        }, missing_values=[])
         for name, fields in {
             "root": [("_sm_key", U.STRING)],
             "items": [
@@ -130,7 +130,7 @@ def _authoring_independent() -> None:
     _assert_authoring_value(reconstruct(json.loads(Path("authoring-emitted.json").read_text()), prepared))
     empty = {"root": [{"_sm_key": "empty"}], "items": []}
     assert reconstruct(empty, prepared) == AuthoringLedger(())
-    assert prepared.tables["items"].typespec == relations["items"]
+    assert prepared.tables["items"].table_schema == relations["items"]
     print("Portable mapping and independent schemas reconstruct exact tuples, duplicates, Decimal/date and empty data")
 
 def _role_mapping() -> MappingSpec:
@@ -160,13 +160,13 @@ def _persist_roles() -> None:
     prepared = prepare(derive(AuthoringDirectory), mapping)
     Path("authoring-role-mapping.json").write_text(dump_mapping(mapping, format="json"), encoding="utf-8")
     Path("authoring-role-schema.json").write_text(json.dumps({
-        name: table.typespec.to_frictionless() for name, table in prepared.tables.items()
+        name: table.table_schema.to_frictionless() for name, table in prepared.tables.items()
     }), encoding="utf-8")
 
 
 def _read_roles() -> None:
     mapping = load_mapping(Path("authoring-role-mapping.json").read_bytes(), format="json")
-    relations = {name: TypeSpec.from_frictionless(schema) for name, schema in
+    relations = {name: TableSchema.from_frictionless(schema) for name, schema in
                  json.loads(Path("authoring-role-schema.json").read_text(encoding="utf-8")).items()}
     prepared = prepare(derive(AuthoringDirectory), mapping, relations=relations)
     assert reconstruct(_role_rows(), prepared) == AuthoringDirectory(
@@ -229,15 +229,15 @@ def _wire_hook(value):
     return value
 
 
-def _type_specs(prepared):
-    return {name: plan.typespec.to_frictionless() for name, plan in prepared.tables.items()}
+def _table_schemas(prepared):
+    return {name: plan.table_schema.to_frictionless() for name, plan in prepared.tables.items()}
 
 
 def _portable_artifacts(derived, prepared, mapping):
     return {
         "declaration": derived.structure.model_dump(mode="json"),
         "mapping": mapping.model_dump(mode="json"),
-        "typespecs": _type_specs(prepared),
+        "table_schemas": _table_schemas(prepared),
     }
 
 
@@ -445,7 +445,7 @@ def main(mode: str) -> None:
             "artifacts": _portable_artifacts(derived, prepared, mapping),
         }
         Path("complete-input.json").write_text(json.dumps(wire, default=_wire_value), encoding="utf-8")
-        print("Writer emitted actual prepared table carriers, declaration, mapping and TypeSpecs")
+        print("Writer emitted actual prepared table carriers, declaration, mapping and TableSchemas")
     elif mode == "read":
         data = json.loads(Path("complete-input.json").read_text(encoding="utf-8"), object_hook=_wire_hook)
         mapping = MappingSpec.model_validate(data["artifacts"]["mapping"])
@@ -455,8 +455,8 @@ def main(mode: str) -> None:
             native_types=native.native_types, binding=native.binding,
         )
         relations = {
-            name: TypeSpec.from_frictionless(serialized)
-            for name, serialized in data["artifacts"]["typespecs"].items()
+            name: TableSchema.from_frictionless(serialized)
+            for name, serialized in data["artifacts"]["table_schemas"].items()
         }
         prepared = prepare(derived, mapping, relations=relations)
         tables = data["tables"]

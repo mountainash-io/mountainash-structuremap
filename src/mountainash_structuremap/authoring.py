@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 import yaml
-from mountainash.typespec.spec import TypeSpec
+from mountainash.typespec.spec import TableSchema
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
 from yaml.constructor import ConstructorError
 
@@ -199,7 +199,7 @@ def assemble_structure(documents: Sequence[StructureDocument], *, root: str | Sh
 class AuthoringBundle:
     structure: StructureDocument | None
     mapping: MappingSpec
-    relations: Mapping[str, TypeSpec]
+    relations: Mapping[str, TableSchema]
 
 
 class _BundleDocument(Declaration):
@@ -210,10 +210,10 @@ class _BundleDocument(Declaration):
 
 def load_bundle(source: str | bytes, *, format: Format) -> AuthoringBundle:
     document = cast(_BundleDocument, _load(source, format, _BundleDocument, "bundle"))
-    relations: dict[str, TypeSpec] = {}
+    relations: dict[str, TableSchema] = {}
     for name, descriptor in document.relations.items():
         try:
-            relations[name] = TypeSpec.from_frictionless(descriptor)
+            relations[name] = TableSchema.from_frictionless(descriptor)
         except Exception as exc:
             raise StructureMapError(
                 "invalid_authoring_document", f"Invalid relation descriptor {name!r}: {exc}",

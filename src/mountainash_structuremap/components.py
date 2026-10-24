@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, Mapping, Protocol
 
-from mountainash.typespec.spec import FieldSpec
+from mountainash.typespec.spec import FieldDefinition
 
 from mountainash_structuremap.codecs import DecodingCodec, EncodingCodec
 from mountainash_structuremap.definitions import (
@@ -34,7 +34,7 @@ class PreparationContext(Protocol):
     table: str
     directions: frozenset[Direction]
 
-    def field(self, column: str, *, table: str | None = None) -> FieldSpec: ...
+    def field(self, column: str, *, table: str | None = None) -> FieldDefinition: ...
     def apply(self, node: MappingNode) -> None: ...
     def value(self, *, codec: EncodingCodec | DecodingCodec | None = None,
               options: UseOverride | None = None) -> None: ...

@@ -10,7 +10,7 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 from mountainash.typespec.converters import to_arrow_schema
-from mountainash.typespec.spec import TypeSpec
+from mountainash.typespec.spec import TableSchema
 from mountainash_files import FileSourceSpec
 from wheel_external import DatePartsDecoder, DatePartsEncoder
 from wheel_models import (
@@ -143,7 +143,7 @@ def run(operation: str, format: str) -> None:
             artifact.write_text(json.dumps({
                 "declaration": native.structure.model_dump(mode="json"),
                 "mapping": mapping.model_dump(mode="json"),
-                "relations": {key: table.typespec.to_frictionless() for key, table in reader.tables.items()},
+                "relations": {key: table.table_schema.to_frictionless() for key, table in reader.tables.items()},
             }), encoding="utf-8")
             decompose_to(value, writer, OutputTarget(root, name), format=format, buffer_rows=1)
             if name == "xml-split":
@@ -158,7 +158,7 @@ def run(operation: str, format: str) -> None:
             folder = root / f"{name}-independent"
             folder.mkdir()
             for index, (key, plan) in enumerate(reader.tables.items()):
-                table = pa.Table.from_pylist(rows[key], schema=to_arrow_schema(plan.typespec))
+                table = pa.Table.from_pylist(rows[key], schema=to_arrow_schema(plan.table_schema))
                 path = folder / f"{index}.{format}"
                 if format == "parquet":
                     pq.write_table(table, path)
@@ -169,7 +169,7 @@ def run(operation: str, format: str) -> None:
             data = json.loads(artifact.read_text(encoding="utf-8"))
             restored = DerivedModel(structure=StructureSpec.model_validate(data["declaration"]), native_types=native.native_types, binding=native.binding)
             reader = prepare(restored, MappingSpec.model_validate(data["mapping"]),
-                             relations={key: TypeSpec.from_frictionless(schema) for key, schema in data["relations"].items()},
+                             relations={key: TableSchema.from_frictionless(schema) for key, schema in data["relations"].items()},
                              components=decode, directions=frozenset({"reconstruct"}))
             check(reconstruct_from(root / name, reader))
             sources = {key: FileSourceSpec(path=str(root / f"{name}-independent" / f"{index}.{format}")) for index, key in enumerate(reader.tables)}

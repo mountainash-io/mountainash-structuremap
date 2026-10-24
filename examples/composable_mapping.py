@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from mountainash.typespec.spec import FieldSpec, TypeSpec
+from mountainash.typespec.spec import FieldDefinition, TableSchema
 from mountainash.typespec.universal_types import UniversalType as U
 
 from mountainash_structuremap import (
@@ -67,7 +67,7 @@ class AddressMapping:
 
 
 class DatePartsCodec:
-    fields = tuple(FieldSpec(name=name, type=U.INTEGER, missing_values=[]) for name in ("year", "month", "day"))
+    fields = {name: FieldDefinition(type=U.INTEGER, missing_values=[]) for name in ("year", "month", "day")}
 
     def encode(self, value):
         if type(value) is not date:
@@ -106,15 +106,15 @@ class DateMapping:
 
 def main():
     schemas = {
-        "orders": TypeSpec(fields=[FieldSpec(name=n, type=t, missing_values=[]) for n, t in (
+        "orders": TableSchema(fields={n: FieldDefinition(type=t, missing_values=[]) for n, t in (
             ("order_id", U.INTEGER), ("home_city", U.STRING), ("home_country", U.STRING),
             ("work_city", U.STRING), ("work_country", U.STRING),
             ("year", U.INTEGER), ("month", U.INTEGER), ("day", U.INTEGER),
-        )], missing_values=[]),
-        "lines": TypeSpec(fields=[FieldSpec(name=n, type=t, missing_values=[]) for n, t in (
+        )}, missing_values=[]),
+        "lines": TableSchema(fields={n: FieldDefinition(type=t, missing_values=[]) for n, t in (
             ("order_id", U.INTEGER), ("line_no", U.INTEGER), ("country", U.STRING),
             ("amount", U.STRING), ("effective", U.DATE), ("source_date", U.STRING),
-        )], missing_values=[]),
+        )}, missing_values=[]),
     }
     mapping = MappingSpec(use=MappingUse(component="core.record", config={"table": "orders"}, children={
         "home": MappingUse(component="example.address.v1", config={"prefix": "home"}),
@@ -280,13 +280,13 @@ def portable_authoring():
                               "role_column": "address_role", "role": role},
         )
     schemas = {
-        "root": TypeSpec(fields=[FieldSpec(name="_sm_key", type=U.STRING, missing_values=[])], missing_values=[]),
-        "addresses": TypeSpec(fields=[
-            FieldSpec(name=name, type=kind, missing_values=[]) for name, kind in (
+        "root": TableSchema(fields={"_sm_key": FieldDefinition(type=U.STRING, missing_values=[])}, missing_values=[]),
+        "addresses": TableSchema(fields={
+            name: FieldDefinition(type=kind, missing_values=[]) for name, kind in (
                 ("city", U.STRING), ("_sm_parent", U.STRING), ("_sm_position", U.INTEGER),
                 ("address_role", U.STRING), ("country", U.STRING),
             )
-        ], missing_values=[]),
+        }, missing_values=[]),
     }
     rows = {
         "root": [{"_sm_key": "document"}],

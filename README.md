@@ -73,9 +73,9 @@ assert rebuilt == source
 ```
 
 `prepared.tables` exposes table names, source paths, parent tables, columns and
-Mountainash `TypeSpec` schemas. Schemas exist before reading instances, including
-for empty tables. TypeSpec inspection returns a copy so callers cannot change
-the executor's retained schema.
+Mountainash `TableSchema` schemas through `table_schema`. Schemas exist before
+reading instances, including for empty tables. `table_schema` inspection returns a
+copy so callers cannot change the executor's retained schema.
 
 ## Supported behavior
 
@@ -175,7 +175,7 @@ during preparation rather than silently falling back.
 
 `prepare(model, mapping, *, relations=None, components=(), directions=...)` uses
 one compiler and shared executor for default mappings and external components.
-`relations` is a table-name-to-Mountainash-`TypeSpec` mapping. When supplied, its
+`relations` is a table-name-to-Mountainash-`TableSchema` mapping. When supplied, its
 table/column sets and physical types constrain preparation; data never determines
 the schema, including empty collections and all-null fields. Preparation snapshots
 the declarations and schemas rather than retaining caller-owned mutable inputs.
@@ -259,12 +259,14 @@ applies the reverse native-column projection before native construction. Casts
 can normalize values (`"01"` → `1` → `"1"`); they do not promise lexical identity.
 
 Cast schemas retain canonical numeric widths through Mountainash
-`FieldSpec(dtype=...)`, descriptor reload and Arrow materialization, including
+`FieldDefinition(dtype=...)`, descriptor reload and Arrow materialization, including
 unsigned 64-bit values. Explicit native overrides retain Mountainash precedence
 in physical schema comparison and reverse projections.
 
 `EncodingCodec` needs `fields` and `encode`; `DecodingCodec` needs `fields`, `check`
-and `decode`. `ScalarCodec` combines them. Codecs use tuples of cells and
+and `decode`. `fields` is an ordered mapping of column name to Mountainash
+`FieldDefinition`; `context.field(column)` returns the `FieldDefinition` declared in
+`relations`. `ScalarCodec` combines them. Codecs use tuples of cells and
 `CellLocation` from the public `codecs` module. An encode-only or decode-only codec
 does not need unused methods. Select `directions=frozenset({"decompose"})` or
 `frozenset({"reconstruct"})`; the default prepares both. Execution rejects an
@@ -339,7 +341,7 @@ model = DerivedModel(
 ```
 
 `AuthoringBundle(structure=..., mapping=..., relations=...)` packages an optional
-structure document, mapping and table-name-to-`TypeSpec` declarations.
+structure document, mapping and table-name-to-`TableSchema` declarations.
 `dump_bundle`/`load_bundle` accept explicit `format="json"` or `"yaml"`.
 Relations retain Mountainash Frictionless descriptors, including parameterized
 dtypes and missing-value settings; bundles contain no executable native bindings.
@@ -738,7 +740,7 @@ Requires Python 3.12+, Git and Hatch 1.14+; Hatch manages its configured uv
 installer. The package requires Pydantic 2.11+ for native name-only validation.
 
 Mountainash is sourced directly from GitHub at a pinned commit on `develop`:
-`c1e8da53822af9b61079a34f00c811ce5d53c733`. The dependency in `pyproject.toml`
+`ae9d408b72e59c322bae04a4925100a91e01e7fb`. The dependency in `pyproject.toml`
 is the single pin used by source environments, wheel installation and CI.
 No package-index publication or sibling checkout is required.
 

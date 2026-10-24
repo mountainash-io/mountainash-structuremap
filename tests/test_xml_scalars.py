@@ -5,7 +5,7 @@ import pyarrow as pa
 import pytest
 from mountainash import DecimalDtype
 from mountainash.typespec.converters import to_arrow_schema
-from mountainash.typespec.spec import TypeSpec
+from mountainash.typespec.spec import TableSchema
 from xsdata.models.datatype import XmlBase64Binary, XmlDate, XmlDateTime, XmlDuration, XmlHexBinary, XmlPeriod, XmlTime
 
 from mountainash_structuremap import (
@@ -58,7 +58,7 @@ def test_exact_lexical_decimal_is_context_independent(native, lexical):
 
 def test_decimal_facets_cover_whole_source_domain_without_rounding():
     prepared = prepare(derive(FacetedAmount))
-    assert prepared.tables["root"].typespec.get_field("amount").dtype == DecimalDtype(5, 2)
+    assert prepared.tables["root"].table_schema.get_field("amount").dtype == DecimalDtype(5, 2)
     result = reconstruct({"root": [{"_sm_key": "external", "amount": Decimal("999")}]}, prepared)
     assert result.amount == Decimal("999")
     with pytest.raises(StructureMapError):
@@ -254,7 +254,7 @@ def test_explicit_typed_decimal_without_facets_is_rejected():
 
 def test_decimal_carrier_precision_38_boundary():
     prepared = prepare(derive(PrecisionBoundary))
-    spec = prepared.tables["root"].typespec
+    spec = prepared.tables["root"].table_schema
     assert spec.get_field("wide").dtype == DecimalDtype(38, 0)
     assert spec.get_field("wider").type.name == "STRING"
     assert spec.get_field("bounded").dtype == DecimalDtype(2, 1)
@@ -460,7 +460,7 @@ def test_prepared_numeric_temporal_rows_survive_mountainash_persistence_and_arro
     emitted = decompose(source, prepared)
     delivered = {}
     for name, table in prepared.tables.items():
-        persisted = TypeSpec.from_frictionless(table.typespec.to_frictionless())
+        persisted = TableSchema.from_frictionless(table.table_schema.to_frictionless())
         schema = to_arrow_schema(persisted)
         if name == "values":
             assert persisted.get_field("amount").dtype == DecimalDtype(23, 3)

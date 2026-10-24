@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import NoReturn
 
 from mountainash import DecimalDtype
-from mountainash.typespec.spec import FieldSpec
+from mountainash.typespec.spec import FieldDefinition
 from mountainash.typespec.universal_types import UniversalType
 
 from mountainash_structuremap.codecs import Cell, CellLocation, ScalarCodec
@@ -58,7 +59,7 @@ def _bounded_decimal_precision(facets: NumericFacets | None, fraction_digits: in
 
 
 class DecimalCodec:
-    fields: tuple[FieldSpec, ...]
+    fields: Mapping[str, FieldDefinition]
 
     def __init__(self, declaration: Scalar, column: str, path: str, policy: str | None):
         self.column, self.path = column, path
@@ -99,9 +100,9 @@ class DecimalCodec:
         self.typed = policy == "typed" or policy is None and precision is not None and precision <= 38
         if self.typed:
             assert precision is not None and fraction is not None
-            self.fields = (FieldSpec(name=column, type=UniversalType.NUMBER, dtype=DecimalDtype(precision, fraction), missing_values=[]),)
+            self.fields = {column: FieldDefinition(type=UniversalType.NUMBER, dtype=DecimalDtype(precision, fraction), missing_values=[])}
         else:
-            self.fields = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+            self.fields = {column: FieldDefinition(type=UniversalType.STRING, missing_values=[])}
 
     def _validate_facets(self, value: Decimal, path: str, location: CellLocation | None = None) -> None:
         if not value.is_finite():
@@ -179,7 +180,7 @@ class DecimalCodec:
 class NativeDateCodec:
     def __init__(self, column: str, path: str):
         self.column, self.path = column, path
-        self.fields: tuple[FieldSpec, ...] = (FieldSpec(name=column, type=UniversalType.DATE, missing_values=[]),)
+        self.fields: Mapping[str, FieldDefinition] = {column: FieldDefinition(type=UniversalType.DATE, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         if value is None:

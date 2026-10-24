@@ -1,6 +1,6 @@
 from datetime import date
 
-from mountainash.typespec.spec import FieldSpec
+from mountainash.typespec.spec import FieldDefinition
 from mountainash.typespec.universal_types import UniversalType
 
 from mountainash_structuremap import StructureMapError
@@ -11,7 +11,7 @@ from mountainash_structuremap.mapping import MappingUse
 
 
 class _DatePartsCodec:
-    fields = tuple(FieldSpec(name=name, type=UniversalType.INTEGER, missing_values=[]) for name in ("year", "month", "day"))
+    fields = {name: FieldDefinition(type=UniversalType.INTEGER, missing_values=[]) for name in ("year", "month", "day")}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         if type(value) is not date:

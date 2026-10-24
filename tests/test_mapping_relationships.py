@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 import pytest
-from mountainash.typespec.spec import FieldSpec, TypeSpec
+from mountainash.typespec.spec import FieldDefinition, TableSchema
 from mountainash.typespec.universal_types import UniversalType as U
 
 from mountainash_structuremap import StructureMapError, decompose, derive, prepare, reconstruct
@@ -39,8 +39,8 @@ class Batch:
     students: list[Student]
 
 
-def _field(name: str, kind: U) -> FieldSpec:
-    return FieldSpec(name=name, type=kind, missing_values=[])
+def _field(name: str, kind: U) -> tuple[str, FieldDefinition]:
+    return name, FieldDefinition(type=kind, missing_values=[])
 
 
 def _ancestor_mapping() -> MappingSpec:
@@ -73,20 +73,20 @@ def _ancestor_mapping() -> MappingSpec:
     )
 
 
-def _ancestor_relations() -> dict[str, TypeSpec]:
+def _ancestor_relations() -> dict[str, TableSchema]:
     return {
-        "batches": TypeSpec(fields=[_field("batch_id", U.INTEGER)], missing_values=[]),
-        "students": TypeSpec(
-            fields=[_field("batch_id", U.INTEGER), _field("student_id", U.INTEGER)],
+        "batches": TableSchema(fields=dict([_field("batch_id", U.INTEGER)]), missing_values=[]),
+        "students": TableSchema(
+            fields=dict([_field("batch_id", U.INTEGER), _field("student_id", U.INTEGER)]),
             missing_values=[],
         ),
-        "lines": TypeSpec(
-            fields=[
+        "lines": TableSchema(
+            fields=dict([
                 _field("batch_id", U.INTEGER),
                 _field("student_id", U.INTEGER),
                 _field("line_id", U.INTEGER),
                 _field("label", U.STRING),
-            ],
+            ]),
             missing_values=[],
         ),
     }
@@ -217,7 +217,7 @@ def _shared_mapping(
     )
 
 
-def _shared_relations(*, has_position: bool = True) -> dict[str, TypeSpec]:
+def _shared_relations(*, has_position: bool = True) -> dict[str, TableSchema]:
     contact_fields = [
         _field("contact_key", U.STRING),
         _field("household_key", U.STRING),
@@ -226,8 +226,8 @@ def _shared_relations(*, has_position: bool = True) -> dict[str, TypeSpec]:
         contact_fields.append(_field("ordinal", U.INTEGER))
     contact_fields.extend([_field("kind", U.STRING), _field("name", U.STRING)])
     return {
-        "households": TypeSpec(fields=[_field("household_key", U.STRING)], missing_values=[]),
-        "contacts": TypeSpec(fields=contact_fields, missing_values=[]),
+        "households": TableSchema(fields=dict([_field("household_key", U.STRING)]), missing_values=[]),
+        "contacts": TableSchema(fields=dict(contact_fields), missing_values=[]),
     }
 
 
@@ -496,7 +496,8 @@ def test_declared_parent_table_selector_must_agree_with_single_role_parent(selec
         update={"parent_table": "owner_table"},
     )
     schemas = _shared_relations()
-    schemas["contacts"].fields.append(_field("owner_table", U.STRING))
+    name, definition = _field("owner_table", U.STRING)
+    schemas["contacts"].fields[name] = definition
     prepared = prepare(derive(Household), mapping, relations=schemas)
     rows = {
         "households": [{"household_key": "h"}],

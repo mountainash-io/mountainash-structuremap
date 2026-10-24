@@ -39,7 +39,7 @@ def _error(
 
 
 def _schemas(tables: Mapping[str, TablePlan]) -> dict[str, pa.Schema]:
-    return {name: to_arrow_schema(table.typespec) for name, table in tables.items()}
+    return {name: to_arrow_schema(table.table_schema) for name, table in tables.items()}
 
 
 class ArrowCollector:

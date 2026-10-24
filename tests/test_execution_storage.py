@@ -159,7 +159,7 @@ def test_external_multicolumn_components_and_lexical_decimal_survive_files(tmp_p
     sources = {}
     for index, (name, table) in enumerate(prepared.tables.items()):
         path = tmp_path / f"{index}.{format}"
-        write_independent(path, pa.Table.from_pylist(rows[name], schema=to_arrow_schema(table.typespec)), format)
+        write_independent(path, pa.Table.from_pylist(rows[name], schema=to_arrow_schema(table.table_schema)), format)
         sources[name] = FileSourceSpec(path=str(path))
     assert reconstruct(read_input_tables(sources, prepared), prepared) == expected
 
@@ -471,7 +471,7 @@ def test_empty_input_still_checks_decimal_and_temporal_parameters(column, dtype)
 
     prepared = prepare(derive(PhysicalDocument))
     sources = {
-        name: pa.Table.from_batches([], schema=to_arrow_schema(table.typespec))
+        name: pa.Table.from_batches([], schema=to_arrow_schema(table.table_schema))
         for name, table in prepared.tables.items()
     }
     table = sources["values"]

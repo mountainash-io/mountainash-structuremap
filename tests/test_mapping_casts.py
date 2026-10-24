@@ -8,7 +8,7 @@ import pyarrow as pa
 import pytest
 from mountainash.core.dtypes import MountainashDtype, NativeDtype, TypeTarget
 from mountainash.typespec.converters import to_arrow_schema
-from mountainash.typespec.spec import FieldSpec, TypeSpec
+from mountainash.typespec.spec import FieldDefinition, TableSchema
 
 from mountainash_structuremap import (
     MappingSpec,
@@ -72,7 +72,7 @@ def test_type_cast_projects_string_values_to_integer_and_reconstructs_native_str
     assert [row["id"] for row in rows["items"]] == [1, 2]
     assert type(rows["items"][0]["id"]) is int
     assert reconstruct(rows, prepared) == Items([Item("1", "first"), Item("2", "second")])
-    table = pa.Table.from_pylist(rows["items"], schema=to_arrow_schema(prepared.tables["items"].typespec))
+    table = pa.Table.from_pylist(rows["items"], schema=to_arrow_schema(prepared.tables["items"].table_schema))
     assert table.schema.field("id").type == pa.int64()
     assert table.column("id").to_pylist() == [1, 2]
 
@@ -93,7 +93,7 @@ def test_cast_physical_width_and_values_survive_schema_reload(target, arrow_type
     prepared = prepare(derive(Items), _mapping(TypeCast(to=target)))
     source = Items([Item(value, "payload") for value in values])
     rows = decompose(source, prepared)
-    reloaded = TypeSpec.from_frictionless(prepared.tables["items"].typespec.to_frictionless())
+    reloaded = TableSchema.from_frictionless(prepared.tables["items"].table_schema.to_frictionless())
     table = pa.Table.from_pylist(rows["items"], schema=to_arrow_schema(reloaded))
     assert table.schema.field("id").type == arrow_type
     convert = float if pa.types.is_floating(arrow_type) else int
@@ -108,11 +108,8 @@ def test_cast_physical_width_and_values_survive_schema_reload(target, arrow_type
 def test_explicit_schema_uses_native_override_for_physical_compatibility(declared, override, compatible):
     mapping = _mapping(TypeCast(to="i8"))
     inferred = prepare(derive(Items), mapping)
-    schemas = {name: table.typespec for name, table in inferred.tables.items()}
-    schemas["items"].fields = [
-        FieldSpec(name="id", dtype=declared, backend_type=override, missing_values=[]) if field.name == "id" else field
-        for field in schemas["items"].fields
-    ]
+    schemas = {name: table.table_schema for name, table in inferred.tables.items()}
+    schemas["items"].fields["id"] = FieldDefinition(dtype=declared, backend_type=override, missing_values=[])
     if not compatible:
         with pytest.raises(StructureMapError) as caught:
             prepare(derive(Items), mapping, relations=schemas)
@@ -121,17 +118,17 @@ def test_explicit_schema_uses_native_override_for_physical_compatibility(declare
     prepared = prepare(derive(Items), mapping, relations=schemas)
     source = Items([Item("-128", "payload"), Item("127", "payload")])
     rows = decompose(source, prepared)
-    table = pa.Table.from_pylist(rows["items"], schema=to_arrow_schema(prepared.tables["items"].typespec))
+    table = pa.Table.from_pylist(rows["items"], schema=to_arrow_schema(prepared.tables["items"].table_schema))
     assert table.schema.field("id").type == pa.int8()
     assert reconstruct({**rows, "items": table.to_pylist()}, prepared) == source
 
 
 def test_inverse_projection_honors_native_override_before_canonical_dtype():
-    source_field = FieldSpec(
-        name="amount", dtype=MountainashDtype.I8,
+    source_field = FieldDefinition(
+        dtype=MountainashDtype.I8,
         backend_type=NativeDtype(value=pl.Int64, target=TypeTarget.POLARS), missing_values=[],
     )
-    projection = prepare_value_projection((source_field,), TypeCast(to="string"), path="amount")
+    projection = prepare_value_projection({"amount": source_field}, TypeCast(to="string"), path="amount")
     assert projection.apply([{"amount": "128"}], reverse=True) == [{"amount": 128}]
 
 

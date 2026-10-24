@@ -16,7 +16,7 @@ def test_inline_values_and_record_lists_survive_independent_preparation():
     )
     prepared = prepare(derive(Document))
     # Schema preparation must also describe tables which will have no rows.
-    fields = {item.name: item.type for item in prepared.tables["people"].typespec.fields}
+    fields = {name: definition.type for name, definition in prepared.tables["people"].table_schema.fields.items()}
     assert fields["name"] == UniversalType.STRING
     assert fields["home_city"] == UniversalType.STRING
     assert fields["age"] == UniversalType.INTEGER

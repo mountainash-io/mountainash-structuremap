@@ -3,13 +3,14 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from math import copysign, isinf, isnan
 from typing import Literal, NoReturn, cast
 from xml.etree.ElementTree import QName
 
-from mountainash.typespec.spec import FieldSpec
+from mountainash.typespec.spec import FieldDefinition
 from mountainash.typespec.universal_types import UniversalType
 from xsdata.exceptions import ConverterError
 from xsdata.formats.converter import QNameConverter
@@ -51,7 +52,7 @@ class XmlLexicalPrimitiveCodec:
     def __init__(self, family: Literal["bool", "float"], column: str, path: str):
         self.family, self.column, self.path = family, column, path
         self.primitive = PrimitiveCodec(family, column, path)
-        self.fields: tuple[FieldSpec, ...] = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+        self.fields: Mapping[str, FieldDefinition] = {column: FieldDefinition(type=UniversalType.STRING, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         self.primitive.encode(value)
@@ -93,7 +94,7 @@ class XmlLexicalPrimitiveCodec:
 
 
 class XmlBinaryCodec:
-    fields: tuple[FieldSpec, ...]
+    fields: Mapping[str, FieldDefinition]
 
     def __init__(self, native_type: type | None, column: str, path: str, format: str | None):
         self.native_type = native_type or bytes
@@ -132,7 +133,7 @@ class XmlBinaryCodec:
                 remedy="Align format with the declared native binary class",
             )
         self.column, self.path = column, path
-        self.fields = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+        self.fields = {column: FieldDefinition(type=UniversalType.STRING, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         if value is None:
@@ -190,7 +191,7 @@ class XmlBinaryCodec:
 
 
 class XmlQNameCodec:
-    fields: tuple[FieldSpec, ...]
+    fields: Mapping[str, FieldDefinition]
 
     def __init__(self, native_type: type | None, column: str, path: str):
         self.native_type = native_type or QName
@@ -203,7 +204,7 @@ class XmlQNameCodec:
                 remedy="Use xml.etree.ElementTree.QName",
             )
         self.column, self.path = column, path
-        self.fields = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+        self.fields = {column: FieldDefinition(type=UniversalType.STRING, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
 
@@ -259,7 +260,7 @@ class XmlQNameCodec:
 
 
 class XmlBoundedIntegerCodec:
-    fields: tuple[FieldSpec, ...]
+    fields: Mapping[str, FieldDefinition]
 
     def __init__(self, facets: NumericFacets, column: str, path: str):
         self.column, self.path = column, path
@@ -274,7 +275,7 @@ class XmlBoundedIntegerCodec:
                 remedy="Declare signed-i64-proving bounds or use lexical value_space",
             )
         self.bounds = bounds
-        self.fields = (FieldSpec(name=column, type=UniversalType.INTEGER, missing_values=[]),)
+        self.fields = {column: FieldDefinition(type=UniversalType.INTEGER, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         if type(value) is not int:
@@ -406,7 +407,7 @@ class XmlIntegerCodec:
         self.column = column
         self.path = path
         self.facets = facets
-        self.fields: tuple[FieldSpec, ...] = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+        self.fields: Mapping[str, FieldDefinition] = {column: FieldDefinition(type=UniversalType.STRING, missing_values=[])}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         if not isinstance(value, int) or isinstance(value, bool):
@@ -488,7 +489,7 @@ class XmlIntegerCodec:
 
 
 class XmlEnumCodec:
-    fields: tuple[FieldSpec, ...]
+    fields: Mapping[str, FieldDefinition]
 
     def __init__(
         self,

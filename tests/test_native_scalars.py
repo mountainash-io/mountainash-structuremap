@@ -13,7 +13,7 @@ from mountainash_structuremap.native_scalars import prepare_native_scalar
 def test_native_decimal_uses_exact_lexical_text_and_round_trips():
     codec = prepare_native_scalar(Scalar(type="decimal"), "amount", None, "amount")
 
-    assert codec.fields[0].type == UniversalType.STRING
+    assert next(iter(codec.fields.values())).type == UniversalType.STRING
     assert codec.encode(Decimal("0.01")) == ("0.01",)
     assert codec.encode(Decimal("1000000")) == ("1000000",)
     assert codec.encode(None) == (None,)
@@ -33,7 +33,7 @@ def test_native_decimal_facets_select_exact_typed_storage():
         "amount",
     )
 
-    assert codec.fields[0].type == UniversalType.NUMBER
+    assert next(iter(codec.fields.values())).type == UniversalType.NUMBER
     assert codec.encode(Decimal("0.01")) == (Decimal("0.01"),)
     assert codec.check((Decimal("1.25"),), CellLocation("amount")) == Decimal("1.25")
     with pytest.raises(StructureMapError):
@@ -53,7 +53,7 @@ def test_native_date_uses_date_cells_and_rejects_datetime():
     codec = prepare_native_scalar(Scalar(type="date"), "effective", None, "effective")
     value = date(2023, 9, 30)
 
-    assert codec.fields[0].type == UniversalType.DATE
+    assert next(iter(codec.fields.values())).type == UniversalType.DATE
     assert codec.encode(value) == (value,)
     assert codec.encode(None) == (None,)
     assert codec.check((value,), CellLocation("effective")) == value

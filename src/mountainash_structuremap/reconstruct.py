@@ -62,16 +62,16 @@ def _scalar_cell(
     row_number: int,
 ) -> object:
     codec = cast(DecodingCodec, program.codec)
-    fields = codec.fields
-    cells = tuple(row.get(field.name) for field in fields)
+    fields = tuple(codec.fields)
+    cells = tuple(row.get(name) for name in fields)
     if all(value is None for value in cells):
         if program.nullable:
             return None
         raise _error("null_not_allowed", "Non-nullable scalar cell is null", path=program.path,
                      remedy="Supply a value or declare the member nullable", table=table,
-                     row=row_number, column=fields[0].name)
+                     row=row_number, column=fields[0])
     return codec.check(cells, CellLocation(path=program.path, table=table, row=row_number,
-                                           column=fields[0].name))
+                                           column=fields[0]))
 
 
 def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: PreparedMapping[T]) -> T:
@@ -109,7 +109,7 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
         program = prepared.programs[program_id]
         columns: set[str] = set()
         if isinstance(program, ScalarProgram):
-            columns.update(field.name for field in program.codec.fields)
+            columns.update(program.codec.fields)
         elif isinstance(program, RecordProgram):
             for _, child in program.members:
                 columns.update(payload_columns(child))
@@ -655,8 +655,8 @@ def reconstruct(tables: Mapping[str, Sequence[Mapping[str, Cell]]], prepared: Pr
         while pending:
             program = prepared.programs[pending.pop()]
             if isinstance(program, ScalarProgram):
-                if any(row[field.name] is not None for field in program.codec.fields
-                       if field.name not in ignored_columns):
+                if any(row[name] is not None for name in program.codec.fields
+                       if name not in ignored_columns):
                     return False
             elif isinstance(program, RecordProgram):
                 pending.extend(child for _, child in reversed(program.members))

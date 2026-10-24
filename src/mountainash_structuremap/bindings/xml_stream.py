@@ -377,7 +377,7 @@ def _check_dependencies(
         for name, use in program.members:
             child = prepared.programs[use]
             leaves = [
-                leaf for leaf in scalar_leaves(use) if required.intersection(field.name for field in leaf.codec.fields)
+                leaf for leaf in scalar_leaves(use) if required.intersection(leaf.codec.fields)
             ]
             if not leaves:
                 continue

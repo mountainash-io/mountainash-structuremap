@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Literal, Protocol
 
-from mountainash.typespec.spec import FieldSpec
+from mountainash.typespec.spec import FieldDefinition
 from mountainash.typespec.universal_types import UniversalType
 
 from mountainash_structuremap.errors import StructureMapError
@@ -20,13 +21,13 @@ class CellLocation:
     row: int | None = None
     column: str | None = None
 class EncodingCodec(Protocol):
-    fields: tuple[FieldSpec, ...]
+    fields: Mapping[str, FieldDefinition]
 
     def encode(self, value: object) -> tuple[Cell, ...]: ...
 
 
 class DecodingCodec(Protocol):
-    fields: tuple[FieldSpec, ...]
+    fields: Mapping[str, FieldDefinition]
 
     def check(self, cells: tuple[Cell, ...], location: CellLocation) -> object: ...
 
@@ -64,7 +65,7 @@ class PrimitiveCodec:
             "float": UniversalType.NUMBER,
             "bool": UniversalType.BOOLEAN,
         }[scalar_type]
-        self.fields: tuple[FieldSpec, ...] = (FieldSpec(name=column, type=physical, missing_values=[]),)
+        self.fields: Mapping[str, FieldDefinition] = {column: FieldDefinition(type=physical, missing_values=[])}
 
     def _check_domain(self, value: object, path: str, location: CellLocation | None = None) -> None:
         if self.allowed_values is not None and not any(

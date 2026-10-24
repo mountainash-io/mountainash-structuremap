@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Migrate to Mountainash PR 413 shared schemas (`ae9d408b72e59c322bae04a4925100a91e01e7fb`): `FieldSpec`/`TypeSpec` become `FieldDefinition`/`TableSchema`; `TablePlan.typespec` is now `TablePlan.table_schema`; codec `fields`, `context.field(...)` and cast projection `source_fields`/`projected_fields` use ordered `Mapping[str, FieldDefinition]` (names are mapping keys) instead of tuples of named fields. Custom codecs must expose `fields` as a mapping, and `relations` must be `TableSchema` values with mapping-valued `fields`.
 - Adopt Mountainash `c1e8da53822af9b61079a34f00c811ce5d53c733` canonical dtype fields, preserving numeric widths through prepared schemas, descriptor reload and Arrow values.
 - Honor explicit native override precedence in schema reconciliation and inverse casts.
 - Declare PyArrow directly and add a pinned, installable Files dependency extra plus lxml for XML execution.

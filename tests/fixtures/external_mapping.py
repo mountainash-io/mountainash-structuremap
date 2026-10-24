@@ -1,7 +1,7 @@
 """Consumer-owned components using documented public submodules only."""
 from datetime import date
 
-from mountainash.typespec.spec import FieldSpec
+from mountainash.typespec.spec import FieldDefinition
 from mountainash.typespec.universal_types import UniversalType
 
 from mountainash_structuremap import StructureMapError
@@ -27,7 +27,7 @@ class AddressColumns:
 
 class DatePartsCodec:
     def __init__(self, names: tuple[str, ...]):
-        self.fields = tuple(FieldSpec(name=name, type=UniversalType.INTEGER, missing_values=[]) for name in names)
+        self.fields = {name: FieldDefinition(type=UniversalType.INTEGER, missing_values=[]) for name in names}
 
     def encode(self, value: object) -> tuple[Cell, ...]:
         if type(value) is not date:

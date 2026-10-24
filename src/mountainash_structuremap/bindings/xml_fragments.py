@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import copy
 from dataclasses import dataclass, field
 from io import StringIO
 from typing import Any, cast
 from xml.etree import ElementTree
 
-from mountainash.typespec.spec import FieldSpec
+from mountainash.typespec.spec import FieldDefinition
 from mountainash.typespec.universal_types import UniversalType
 from xsdata.formats.dataclass.context import XmlContext
 from xsdata.formats.dataclass.models.elements import XmlVar
@@ -61,7 +62,7 @@ class FragmentCodec:
         self.column = column
         self.path = path
         self.attributes = attributes
-        self.fields: tuple[FieldSpec, ...] = (FieldSpec(name=column, type=UniversalType.STRING, missing_values=[]),)
+        self.fields: Mapping[str, FieldDefinition] = {column: FieldDefinition(type=UniversalType.STRING, missing_values=[])}
         config = ParserConfig(fail_on_converter_warnings=True, fail_on_unknown_properties=True)
         self.preflight_parser = XmlParser(
             context=XmlContext(models_package=__name__), config=config, handler=XmlEventHandler,

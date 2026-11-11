@@ -807,3 +807,7 @@ and `CI_APP_PRIVATE_KEY`; the app must have read-only contents access to
 `mountainash`, `mountainash-files`, `mountainash-transport`,
 `mountainash-auth-client` and `mountainash-settings` in `mountainash-io`—the exact
 private dependency chain declared in `pyproject.toml`.
+
+## License
+
+Apache License 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.

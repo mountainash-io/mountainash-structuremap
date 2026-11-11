@@ -8,6 +8,8 @@ version = "0.1.0.dev0"
 description = "Declarative native-model and table transformations"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 dependencies = [
   "mountainash @ git+https://github.com/mountainash-io/mountainash.git@ae9d408b72e59c322bae04a4925100a91e01e7fb",
   "pydantic>=2.11,<3",
